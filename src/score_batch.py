@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from classify import classify_review
+from emotion_wordlist import primary_emotion as wordlist_primary_emotion
 
 
 def true_label_binary(rating: float) -> str:
@@ -33,18 +34,28 @@ def load_rows(path: str, n: int) -> list[dict]:
 
 
 def score_one(index: int, row: dict) -> dict:
+    title, text = row.get("title", ""), row.get("text", "")
     truth = true_label_binary(row["rating"])
-    result = classify_review(row.get("title", ""), row.get("text", ""))
+    result = classify_review(title, text)
     predicted = result["sentiment"]
+    wordlist = wordlist_primary_emotion(title, text)
     return {
         "index": index,
         "asin": row.get("asin"),
         "rating": row["rating"],
-        "title": row.get("title", ""),
-        "text": row.get("text", ""),
+        "title": title,
+        "text": text,
         "true_label": truth,
         "predicted_label": predicted,
         "correct": predicted == truth,
+        "llm_emotion": result["emotion"],
+        "wordlist_emotion": wordlist["emotion"],
+        "wordlist_emotion_scores": wordlist["scores"],
+        "emotions_agree": (
+            result["emotion"] is not None
+            and wordlist["emotion"] is not None
+            and result["emotion"] == wordlist["emotion"]
+        ),
         "raw_model_output": result["raw"],
     }
 
@@ -78,6 +89,27 @@ def summarize(records: list[dict]) -> dict:
 
     misclassified = [r["index"] for r in parsed if not r["correct"]]
 
+    # Step 5: how often do the LLM's and the word-list's emotion picks agree?
+    both_present = [r for r in records if r["llm_emotion"] and r["wordlist_emotion"]]
+    wordlist_no_signal = sum(1 for r in records if r["wordlist_emotion"] is None)
+    emotion_agreement = {
+        "reviews_with_both_emotions": len(both_present),
+        "reviews_wordlist_had_no_lexicon_words": wordlist_no_signal,
+        "agree_count": sum(1 for r in both_present if r["emotions_agree"]),
+        "agreement_rate": (
+            sum(1 for r in both_present if r["emotions_agree"]) / len(both_present)
+            if both_present else None
+        ),
+        "llm_emotion_distribution": {
+            e: sum(1 for r in records if r["llm_emotion"] == e) for e in
+            sorted({r["llm_emotion"] for r in records if r["llm_emotion"]})
+        },
+        "wordlist_emotion_distribution": {
+            e: sum(1 for r in records if r["wordlist_emotion"] == e) for e in
+            sorted({r["wordlist_emotion"] for r in records if r["wordlist_emotion"]})
+        },
+    }
+
     return {
         "total_reviews": total,
         "unparsed_responses": unparsed,
@@ -88,6 +120,7 @@ def summarize(records: list[dict]) -> dict:
         "per_class_accuracy": per_class,
         "confusion_matrix": confusion,
         "misclassified_indices": misclassified,
+        "emotion_agreement": emotion_agreement,
     }
 
 
@@ -134,6 +167,15 @@ def main():
     print("Confusion matrix (rows=true rating-derived label, cols=model prediction):")
     for t, row in summary["confusion_matrix"].items():
         print(f"  {t:<9} {row}")
+
+    ea = summary["emotion_agreement"]
+    print("\n--- Step 5: LLM vs. word-list primary emotion ---")
+    print(f"Word list found no lexicon words at all in {ea['reviews_wordlist_had_no_lexicon_words']}/{summary['total_reviews']} reviews")
+    if ea["agreement_rate"] is not None:
+        print(f"Agreement where both have an answer: {ea['agree_count']}/{ea['reviews_with_both_emotions']} ({ea['agreement_rate']:.1%})")
+    print(f"LLM emotion distribution:       {ea['llm_emotion_distribution']}")
+    print(f"Word-list emotion distribution: {ea['wordlist_emotion_distribution']}")
+
     print(f"\nSaved per-review results to {out_dir}/records.json")
     print(f"Saved summary to {out_dir}/summary.json")
 

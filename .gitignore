@@ -7,3 +7,4 @@ data/*.jsonl.gz
 .DS_Store
 MBAX 6418 Assignment 1 Notes.txt
 MBAX 6418 Assignment 1.pdf
+*.webloc

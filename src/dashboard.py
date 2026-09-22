@@ -111,6 +111,46 @@ def render_callout(summary: dict) -> str:
     )
 
 
+def render_emotion_summary(summary: dict) -> str:
+    ea = summary["emotion_agreement"]
+    all_emotions = sorted(
+        set(ea["llm_emotion_distribution"]) | set(ea["wordlist_emotion_distribution"])
+    )
+    rows = ""
+    for e in all_emotions:
+        llm_n = ea["llm_emotion_distribution"].get(e, 0)
+        wl_n = ea["wordlist_emotion_distribution"].get(e, 0)
+        rows += (
+            f'<tr><td style="padding:8px 16px;color:{TEXT_SECONDARY};font-weight:600;">{e}</td>'
+            f'<td style="padding:8px 16px;text-align:right;color:{TEXT_PRIMARY};">{llm_n}</td>'
+            f'<td style="padding:8px 16px;text-align:right;color:{TEXT_PRIMARY};">{wl_n}</td></tr>'
+        )
+    agreement_pct = "n/a" if ea["agreement_rate"] is None else f"{ea['agreement_rate'] * 100:.1f}%"
+
+    tiles = [
+        ("Emotion agreement", agreement_pct,
+         f"{ea['agree_count']}/{ea['reviews_with_both_emotions']} reviews where both had an answer"),
+        ("Word list found nothing", str(ea["reviews_wordlist_had_no_lexicon_words"]),
+         "reviews with zero lexicon-word hits"),
+    ]
+    tile_html = "".join(
+        f'<div class="stat-tile"><div class="label">{label}</div>'
+        f'<div class="value">{value}</div><div class="sub">{sub}</div></div>'
+        for label, value, sub in tiles
+    )
+
+    return (
+        f'<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">'
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;flex:1;min-width:280px;">{tile_html}</div>'
+        f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:16px 18px;min-width:280px;">'
+        f'<table style="border-collapse:collapse;font-size:13px;width:100%;">'
+        f'<tr><th style="text-align:left;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">Emotion</th>'
+        f'<th style="text-align:right;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">LLM</th>'
+        f'<th style="text-align:right;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">Word list</th></tr>'
+        f'{rows}</table></div></div>'
+    )
+
+
 def render_confusion(summary: dict) -> str:
     cm = summary["confusion_matrix"]
     classes = list(cm.keys())
@@ -156,6 +196,10 @@ def filter_records(records: list[dict], mode: str) -> list[dict]:
         return [r for r in records if r["true_label"] == "POSITIVE"]
     if mode == "True label: NEGATIVE":
         return [r for r in records if r["true_label"] == "NEGATIVE"]
+    if mode == "Emotions agree":
+        return [r for r in records if r["emotions_agree"]]
+    if mode == "Emotions differ":
+        return [r for r in records if r["llm_emotion"] and r["wordlist_emotion"] and not r["emotions_agree"]]
     return records
 
 
@@ -183,12 +227,19 @@ def render_review_rows(records: list[dict]) -> str:
             f'font-weight:600;white-space:nowrap;">{pred or "UNPARSED"}</td>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{result_color};'
             f'font-weight:600;white-space:nowrap;">{result_text}</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
+            f'white-space:nowrap;">{r["llm_emotion"] or "—"}</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
+            f'white-space:nowrap;">{r["wordlist_emotion"] or "—"}</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{STATUS_GOOD if r["emotions_agree"] else TEXT_MUTED};'
+            f'white-space:nowrap;">{"✓ Agree" if r["emotions_agree"] else "—"}</td>'
             f'</tr>'
         )
     header = "".join(
         f'<th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;'
         f'color:{TEXT_MUTED};border-bottom:1px solid {GRIDLINE};">{h}</th>'
-        for h in ["#", "Rating", "Title", "Text", "True label", "Predicted", "Result"]
+        for h in ["#", "Rating", "Title", "Text", "True label", "Predicted", "Result",
+                  "LLM emotion", "Word-list emotion", "Emotions"]
     )
     return (
         f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;overflow:hidden;">'
@@ -206,12 +257,13 @@ def build_app(records_path: str, summary_path: str) -> gr.Blocks:
     filter_choices = [
         "All", "Correct only", "Incorrect only",
         "True label: POSITIVE", "True label: NEGATIVE",
+        "Emotions agree", "Emotions differ",
     ]
 
     with gr.Blocks(css=CUSTOM_CSS, title="Gift Card Review Sentiment Dashboard") as demo:
         gr.Markdown("# Gift Card Review Sentiment Dashboard")
         gr.Markdown(
-            "LLM sentiment classification vs. star-rating ground truth — "
+            "LLM sentiment + emotion classification vs. star-rating ground truth — "
             "Step 2 data: first 100 reviews, file order (binary POSITIVE/NEGATIVE)."
         )
 
@@ -219,6 +271,8 @@ def build_app(records_path: str, summary_path: str) -> gr.Blocks:
         gr.HTML(render_callout(summary))
         gr.Markdown("### Confusion matrix")
         gr.HTML(render_confusion(summary))
+        gr.Markdown("### Primary emotion: LLM vs. NRC word list")
+        gr.HTML(render_emotion_summary(summary))
 
         gr.Markdown("### Per-review detail")
         with gr.Row():

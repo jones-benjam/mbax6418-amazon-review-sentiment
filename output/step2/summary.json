@@ -1,7 +1,7 @@
 {
   "total_reviews": 100,
   "unparsed_responses": 0,
-  "overall_accuracy": 0.96,
+  "overall_accuracy": 0.97,
   "class_distribution_in_batch": {
     "POSITIVE": 93,
     "NEGATIVE": 7
@@ -9,8 +9,8 @@
   "per_class_accuracy": {
     "POSITIVE": {
       "support": 93,
-      "correct": 90,
-      "accuracy": 0.967741935483871
+      "correct": 91,
+      "accuracy": 0.978494623655914
     },
     "NEGATIVE": {
       "support": 7,
@@ -20,8 +20,8 @@
   },
   "confusion_matrix": {
     "POSITIVE": {
-      "POSITIVE": 90,
-      "NEGATIVE": 3
+      "POSITIVE": 91,
+      "NEGATIVE": 2
     },
     "NEGATIVE": {
       "POSITIVE": 1,
@@ -31,7 +31,27 @@
   "misclassified_indices": [
     17,
     46,
-    62,
     98
-  ]
+  ],
+  "emotion_agreement": {
+    "reviews_with_both_emotions": 85,
+    "reviews_wordlist_had_no_lexicon_words": 15,
+    "agree_count": 21,
+    "agreement_rate": 0.24705882352941178,
+    "llm_emotion_distribution": {
+      "anger": 7,
+      "anticipation": 2,
+      "disgust": 1,
+      "joy": 89,
+      "trust": 1
+    },
+    "wordlist_emotion_distribution": {
+      "anger": 2,
+      "anticipation": 59,
+      "disgust": 1,
+      "joy": 21,
+      "sadness": 1,
+      "trust": 1
+    }
+  }
 }
