@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gradio-dashboard",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["src/dashboard.py"],
+      "port": 7860
+    }
+  ]
+}
