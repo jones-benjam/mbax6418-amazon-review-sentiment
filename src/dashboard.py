@@ -11,6 +11,7 @@ Run:
         [--summary output/step2/summary.json] [--port 7860]
 """
 import argparse
+import html
 import json
 
 import gradio as gr
@@ -213,14 +214,22 @@ def render_review_rows(records: list[dict]) -> str:
         result_text = "✓ Correct" if r["correct"] else "✗ Incorrect"
         text = r["text"] or ""
         text = (text[:160].strip() + "…") if len(text) > 160 else text
+        # Review title/text is real user-generated Amazon content -- it can
+        # (and does, ~3% of this dataset) contain literal HTML like "<br />"
+        # from the original listing. Un-escaped, the browser renders that as
+        # real markup instead of visible text, corrupting the row and, in the
+        # worst case, letting review content inject arbitrary HTML/JS into
+        # the page. Escape before embedding.
+        safe_title = html.escape(r["title"] or "")
+        safe_text = html.escape(text)
         rows += (
             f'<tr>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_MUTED};">{r["index"]}</td>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_MUTED};'
             f'white-space:nowrap;">{star_string(r["rating"])}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};font-weight:600;">{r["title"]}</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};font-weight:600;">{safe_title}</td>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
-            f'max-width:340px;">{text}</td>'
+            f'max-width:340px;">{safe_text}</td>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{badge_color};'
             f'font-weight:600;white-space:nowrap;">{r["true_label"]}</td>'
             f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{pred_color};'

@@ -85,7 +85,12 @@ def classify_review(title: str, text: str) -> dict:
             {"role": "user", "content": USER_TEMPLATE.format(title=title, text=text)},
         ],
         temperature=0,
-        max_tokens=30,
+        # Measured actual usage tops out around 22 tokens for this schema, but
+        # that only left an ~8-token margin at max_tokens=30 -- too tight to
+        # trust across a much larger, more varied sample (Step 6). A truncated
+        # response silently loses the emotion field (or worse, breaks JSON
+        # parsing entirely) since finish_reason='length' isn't checked here.
+        max_tokens=60,
         # The backing model (Qwen3) is a reasoning model that otherwise burns
         # the token budget on a hidden "thinking" trace before ever writing
         # the JSON answer, leaving content=None. We don't need chain-of-thought
