@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gift Card Review Sentiment Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;   /* blue - sequential / positive class */
+    --series-8:       #e34948;   /* red - negative class */
+    --status-good:      #0ca30c;
+    --status-critical:  #d03b3b;
+    --seq-100: #cde2fb; --seq-200: #9ec5f4; --seq-300: #6da7ec;
+    --seq-400: #3987e5; --seq-450: #2a78d6; --seq-500: #256abf;
+    --seq-600: #184f95; --seq-700: #0d366b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-8:       #e66767;
+      --status-good:      #0ca30c;
+      --status-critical:  #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-8:       #e66767;
+    --status-good:      #0ca30c;
+    --status-critical:  #e66767;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header.page-header { margin-bottom: 32px; }
+  header.page-header h1 { font-size: 26px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header.page-header p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.5; max-width: 720px; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  section { margin-bottom: 28px; }
+  section > h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted); margin: 0 0 12px; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .stat-tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-tile .value { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+  .stat-tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .callout {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--status-critical);
+    border-radius: 8px; padding: 14px 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.55;
+  }
+  .callout .icon { color: var(--status-critical); font-weight: 700; flex-shrink: 0; }
+  .callout strong { color: var(--text-primary); }
+
+  .matrix-wrap { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+  table.confusion { border-collapse: collapse; font-size: 13px; }
+  table.confusion th, table.confusion td { padding: 12px 18px; text-align: center; }
+  table.confusion th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  table.confusion th.corner { visibility: hidden; }
+  table.confusion td.cell { font-weight: 700; font-size: 16px; border-radius: 6px; color: var(--text-primary); }
+  table.confusion td.rowlabel { text-align: right; color: var(--text-secondary); font-weight: 600; }
+  .matrix-legend { font-size: 12px; color: var(--text-muted); max-width: 240px; line-height: 1.6; }
+
+  .table-card { padding: 0; overflow: hidden; }
+  .table-scroll { max-height: 560px; overflow-y: auto; overflow-x: auto; }
+  table.reviews { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13px; }
+  table.reviews thead th {
+    position: sticky; top: 0; background: var(--surface-1); z-index: 1;
+    text-align: left; padding: 10px 14px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--text-muted); border-bottom: 1px solid var(--gridline);
+  }
+  table.reviews tbody td { padding: 10px 14px; border-bottom: 1px solid var(--gridline); vertical-align: top; }
+  table.reviews tbody tr:last-child td { border-bottom: none; }
+  .rating { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .review-title { font-weight: 600; color: var(--text-primary); }
+  .review-text { color: var(--text-secondary); max-width: 360px; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge.pos { color: var(--series-1); }
+  .badge.neg { color: var(--series-8); }
+  .result { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .result.correct { color: var(--status-good); }
+  .result.incorrect { color: var(--status-critical); }
+
+  footer { margin-top: 40px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  footer a { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-header">
+    <h1>Gift Card Review Sentiment Dashboard</h1>
+    <p>LLM sentiment classification vs. star-rating ground truth &mdash; Step 2: first 100 reviews, file order (binary POSITIVE/NEGATIVE).</p>
+  </header>
+
+  <section>
+    <h2>Headline numbers</h2>
+    <div class="kpi-row" id="kpi-row"></div>
+  </section>
+
+  <section>
+    <div class="callout">
+      <span class="icon">&#9888;</span>
+      <div><strong>Imbalance warning.</strong> This batch's rating-derived labels are POSITIVE 93 (93%), NEGATIVE 7 (7%). With POSITIVE dominating, a high overall-accuracy number is easy to reach just by getting the majority class right -- it is not by itself evidence the model handles the minority class well. Balanced sampling across classes arrives in Step 6.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Confusion matrix</h2>
+    <div class="card matrix-wrap">
+      <table class="confusion" id="confusion-table"></table>
+      <div class="matrix-legend">Rows = rating-derived ground truth. Columns = model prediction. Darker cells hold more reviews (shaded relative to that row's total).</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Per-review detail (100 reviews)</h2>
+    <div class="card table-card">
+      <div class="table-scroll">
+        <table class="reviews">
+          <thead>
+            <tr><th>#</th><th>Rating</th><th>Title</th><th>Text</th><th>True label</th><th>Predicted</th><th>Result</th></tr>
+          </thead>
+          <tbody id="review-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Data: Amazon Reviews&nbsp;'23 &ldquo;Gift Cards&rdquo; category (McAuley Lab, UC San Diego).
+    Sentiment predicted by an LLM from review title/text only &mdash; the star rating is used solely to check the model afterward.
+  </footer>
+</div>
+
+<script id="app-data" type="application/json">{"records": [{"index": 0, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Great gift", "text": "Having Amazon money is always good.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 1, "asin": "B005ESMMWW", "rating": 5.0, "title": "amazon gift card", "text": "Always the perfect gift.  I have never given one and had someone seem or act disappointed.  Just the opposite.  They are thrilled and excited to have a bit of a spree.  Always the perfect size and color!  Arrives in 1 day in most cases.  So it's never too late!  Lots of cards to chose from... thank you... birthday... wedding..baby..  and many that work for many occasions...", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 2, "asin": "B01K8RIM5Y", "rating": 5.0, "title": "perfect gift", "text": "When you have a person who is hard to shop for.. an amazon gift card is P E R F E C T.  Man or woman...  No matter what their hobby... lifestyle.. or age.  All you have to do is pick the $.  Don't forget to mention that it is a GIFT when you check out - you will have some gift card options.  I've ordered many of these over years.  They are always received with glee.  Woo hoo!  If you're looking for a great fit for me - this is just my size!  :)  Best to all!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 3, "asin": "B0091JKVU0", "rating": 5.0, "title": "Nice looking", "text": "The tin is a nice touch and pretty large.  It's about 4&#34; in diameter and about 1/2&#34; thick.  I added a pretty red ribbon and it is perfect.  Who doesn't love shopping on Amazon? Arrived quickly, I have Prime... but I think they ship the gift cards out SUPER fast... like over night. In case you need it for a FAST gift.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 4, "asin": "B00FTGTM5E", "rating": 1.0, "title": "Not $10 Gift Cards", "text": "I bought this pack of Starbucks Gift cards in 2019. Ive given them to friends and I gave 2 to my daughter.<br />My daughter used one recently and it had $6.52 on the card not $10.00. She had the cashier check the balance of the other card and it had $5.32 on it! She had forgotten that she had these gift cards, so yes, 2 years later decided to use the when she found them! Do they decline in value? And then both had random amounts on them! I'm embarrassed now to have given them as gifts! Friends receiving the gift card aren't going to tell you that weren't able to cover their order with the card you gave them!!!", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 5, "asin": "B072L7GTF5", "rating": 5.0, "title": "Cute!", "text": "That snowman tin is adorable", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 6, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Easy gift", "text": "Great and easy gift", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 7, "asin": "B072P5VV4D", "rating": 5.0, "title": "Great gift", "text": "Super cute nice quality tin<br />Your choose amount", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 8, "asin": "B072P5VV4D", "rating": 5.0, "title": "Gifts for my two granddaughters", "text": "They love it !!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 9, "asin": "B071NM2PNL", "rating": 5.0, "title": "Great for saying \u201cthank you\u201d to the mail person, farrier, yard man,etc", "text": "So many people<br />Make your life better so remember them!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 10, "asin": "B01GKWEH64", "rating": 5.0, "title": "Convenient, safe, and perfect gift", "text": "My grandson inlaw loves his gift cards, so it's the perfect gift for Christmas", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 11, "asin": "B084RMVP59", "rating": 5.0, "title": "Giftcard", "text": "What can you say about a gift card? Well, it was valid. It's a good gift for someone who doesn't like to cook. Arrived promptly.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 12, "asin": "B07HJHK8Y5", "rating": 5.0, "title": "Simple giftcard!", "text": "Easy way to gift money for birthdays.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 13, "asin": "B0866T1TQJ", "rating": 5.0, "title": "Great giftcard", "text": "Great gift for online shoppers!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 14, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Easy..", "text": "Reloading is easy. Shopping is easy. Amazon is easy.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 15, "asin": "B00X6G8WCI", "rating": 1.0, "title": "One Star", "text": "Card did not work!!!!", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 16, "asin": "B01K8RMDO0", "rating": 5.0, "title": "Great Product.", "text": "I bought this for a Christmas gift.The recipient really liked it.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 17, "asin": "B01IE42ST4", "rating": 5.0, "title": "No note attached to sent gift card", "text": "What a pretty gift card presentation , the recipient loved it ! I have one complaint , I took the time and wrote a short note to the recipient of the gift card so she knew who and why the GC was being sent but the note wasn\u2019t attached. I\u2019ve used the option to write a note on many occasions and several times it showed up without the note . I actually had to contact her to ask if she had checked her mail knowing it had arrived .", "true_label": "POSITIVE", "predicted_label": "NEGATIVE", "correct": false, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 18, "asin": "B06W5SBSL7", "rating": 5.0, "title": "Gift card", "text": "Perfect! Arrived just when stated!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 19, "asin": "B078VSWVGY", "rating": 5.0, "title": "Good", "text": "Good gift card", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 20, "asin": "B072F9T6VX", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 21, "asin": "B01C9MW8Z6", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 22, "asin": "B072BQ7XSH", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 23, "asin": "B01IE42ST4", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 24, "asin": "B07HJD9FVV", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 25, "asin": "B07HJHK8Y5", "rating": 5.0, "title": "Good product", "text": "Good product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 26, "asin": "B00BXLWD0U", "rating": 5.0, "title": "Good product", "text": "Good product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 27, "asin": "B01MSBQB1P", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 28, "asin": "B01K8RMDO0", "rating": 5.0, "title": "Good Product", "text": "Good Product", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 29, "asin": "B07PFLG7VG", "rating": 5.0, "title": "Good", "text": "Good", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 30, "asin": "B07FK7L976", "rating": 5.0, "title": "Gift card", "text": "Perfect for Christmas", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 31, "asin": "B00IX1I3G6", "rating": 5.0, "title": "So easy", "text": "Easy to do", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 32, "asin": "B00IX1I3G6", "rating": 2.0, "title": "Mistake", "text": "Hit button by mistake n deduction from credit card on file", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 33, "asin": "B01K8RL9C2", "rating": 5.0, "title": "Great gift idea", "text": "Always great to order from my home. Amazon rocks!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 34, "asin": "B01K8RL9C2", "rating": 5.0, "title": "Secure", "text": "So easy to use and recipients get to choose how to use it.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 35, "asin": "B01C9MW8Z6", "rating": 5.0, "title": "Birthday surprise!", "text": "This was a good birthday surprise!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 36, "asin": "B077T9WSSN", "rating": 5.0, "title": "Birthday Gift", "text": "Have given as Holiday, Birthday & Other Occasions remembrances. Always appreciated by the person receiving.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 37, "asin": "B01MSBQB1P", "rating": 5.0, "title": "Fun", "text": "Awesome & they work", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 38, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Reload is super easy.", "text": "Really ready to reload gift cards.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 39, "asin": "B071NM2PNL", "rating": 5.0, "title": "Convenience of giftabiliy.", "text": "A great way to give a gift to family members in physical form. It was so convenient.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 40, "asin": "B014S24J16", "rating": 5.0, "title": "Great Gift Package", "text": "Nice gift packaging for any event", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 41, "asin": "B00CIECDEM", "rating": 5.0, "title": "Grest Sandwitches !!", "text": "Perfect and I even used Amazon Points - was mailed right out.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 42, "asin": "B00HLAO738", "rating": 5.0, "title": "GOOD PIZZA !!", "text": "Perfect and I even used Amazon Points - was mailed right out.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 43, "asin": "B015726JLY", "rating": 5.0, "title": "We like this Store and they stock Tons of different Items for all kinds of Pets", "text": "Our cats love this place.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 44, "asin": "B076CV42TK", "rating": 5.0, "title": "Money was loaded on card", "text": "Was cute and the money was loaded when it arrived", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 45, "asin": "B07HJHK8Y5", "rating": 5.0, "title": "\ud83d\udc4d", "text": "\ud83d\udc4d", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 46, "asin": "B086KKT3RX", "rating": 5.0, "title": "Love it!!", "text": "This is an online gift card nothing to show sorry\ud83e\udd2a", "true_label": "POSITIVE", "predicted_label": "NEGATIVE", "correct": false, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 47, "asin": "B0091JKY0M", "rating": 5.0, "title": "Five Stars", "text": "Gift cards are always a hit.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 48, "asin": "B072P5VV4D", "rating": 5.0, "title": "So cool you can get a free tin with the gift ...", "text": "So cool you can get a free tin with the gift card and it comes in 24 hours!! Super awesome. Last year I just printed off the gift cards which looked kind of cheap even though the cards were for substantial amounts. Highly recommend.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 49, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Reccomend", "text": "Really easy to load", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 50, "asin": "B0091JKYLQ", "rating": 5.0, "title": "Little sister surprise", "text": "Same gift as her big sister's, this little one can choose the exact thing she most desires and run to the door for three days in anticipation.  A combined birthday and Christmas present for one who knows her own mind.  Good choice!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 51, "asin": "B00IX1I3G6", "rating": 1.0, "title": "The added value was great, but no more", "text": "Purchasing an Amazon gift card came with an added monetary value but no more.<br /><br />A Bronx cheer for you!", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 52, "asin": "B07Q8KN5TJ", "rating": 4.0, "title": "Perfect gift!", "text": "This is near where I work and has a drive through.  Nothing better during these times to give than a gift of good food they can pick up with minimal contact. Gift cards are the way to go these days!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 53, "asin": "B07Y5YJK66", "rating": 4.0, "title": "Great staff appreciation gift!", "text": "What better gift during these times than one to treat yourself.  This is a great gift I gave out to my staff and even those who don't read liked the idea of being able to listen to the audiobooks as well as there being content and other media through Audible.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 54, "asin": "B01C9MW8Z6", "rating": 5.0, "title": "Cute cute cute!", "text": "I love the tin! The gift cards can be ordered on different amounts.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 55, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Five Stars", "text": "Simple and easy.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 56, "asin": "B086KKT3RX", "rating": 5.0, "title": "As described.", "text": "Being able to reload the gift card is a time saver.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 57, "asin": "B01MDLOM4V", "rating": 5.0, "title": "Perfect gift for any occasion. Let them pick out what they love!", "text": "I mean really, who wouldn't LOVE this?!?  Wonderful gift for any occasion.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 58, "asin": "B005ESMHN6", "rating": 5.0, "title": "12 year old daughter loved this gift!", "text": "Perfect gift for your kids!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 59, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Easy to send to an Amazon shopper", "text": "This is a simple gift to friends or family. For me it was easy to setup. Took ok only about 30 seconds. I also redeem Visa gifts by giving the gift card to myself. I like there isnt a fee. I do want Amazon to make some cooler cards with my animation when a receiver gets it.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 60, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Rec'd promo from Amazon when reloading gift card.", "text": "Bonus, rec'd a promo from Amazon for reloading gift card.  Yeah.<br /><br />Gift card was posted to my account quickly.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 61, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Saves a Little Over time.", "text": "Nice way to save a few bucks overtime by reloading your own gift card.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 62, "asin": "B005ESMF5G", "rating": 5.0, "title": "What a great company", "text": "Who wouldn't want an Amazon gift card?  The box foretold the contents, lol.", "true_label": "POSITIVE", "predicted_label": "NEGATIVE", "correct": false, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 63, "asin": "B07RN957Q8", "rating": 1.0, "title": "A problem to use at drive thru's", "text": "I only used the $50 card one time at Burger King. It was difficult to use. Must be run as credit, not as gift card. No remaining balance is given at the end of the transaction. And although it's on me, I misplaced or lost this card after only spending about $6 of it. I was hoping that the seller could provide me with the full card number so that I could at least use it online for other purchases. They failed to respond. I have the receipt from BK, but it only shows the last 4 numbers. There isn't a way of contacting happy cards customer service online that I could figure out. I wish I'd just stuck with credit cards. A lot safer.", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 64, "asin": "B00IX1I3G6", "rating": 5.0, "title": "A gift card does make a great gift for a tweenager.", "text": "We all know the kid who wants nothing. Or actually wants everything but nothing is good enough. YES,YES,the secret weapon. A AMAZON GIFT CARD!!  You pulled it off. You showed your love and you are the best and greatest. Happy Birthday to just because,You are the BEST!!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 65, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Nice to have", "text": "This comes in  very handy, and makes the guilt less", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 66, "asin": "B071NM2PNL", "rating": 5.0, "title": "Excellent Gift", "text": "Who would not like an Amazon Gift Card?  Makes everyone I give them, happy!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 67, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Yay so easy!", "text": "So easy! No scraping!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 68, "asin": "B086KKT3RX", "rating": 5.0, "title": ":)", "text": "easy to use", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 69, "asin": "B00IX1I3G6", "rating": 5.0, "title": "10/10", "text": "works great", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 70, "asin": "B06ZY43PDR", "rating": 5.0, "title": "Perfect for a birthday \ud83c\udf82", "text": "Another nice gift box from Amazon. With the world the way it is now I had to send a gift rather than going to a party. And Amazon has a good selection of gift boxes and fast shipping so my nephew was happy when he received the card in the mail.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 71, "asin": "B07FKKBFHS", "rating": 5.0, "title": "Perfect!", "text": "Bought this for a gift and was very happy it shipped quickly and they received it just in time! Amazon is awesome! \ud83e\udd29", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 72, "asin": "B01K8RIM5Y", "rating": 5.0, "title": "Gift box nice!", "text": "Love the gift box. So much j NB icee than just handing a gift card to the grandkids.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 73, "asin": "B086KKT3RX", "rating": 5.0, "title": "It was soooo easy", "text": "It was a nice way to give a present", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 74, "asin": "B005ESMGZU", "rating": 5.0, "title": "great", "text": "great buy", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 75, "asin": "B00IT0NO10", "rating": 5.0, "title": "Amazon Thinks of Everything!", "text": "GREAT idea!  I was so happy to have these on hand for the Holidays!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 76, "asin": "B0866QM41K", "rating": 5.0, "title": "Amazon lover giftee?  Buy it!", "text": "So gift card for certain sum.  No service fee.  Lively metal gift box - yes..... I said metal.  What is not to love about this???!<br /><br />Well done Amazon.  Well done.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 77, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Timing", "text": "Great timing.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 78, "asin": "B086KKT3RX", "rating": 5.0, "title": "Was easy to do", "text": "Easy to use", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 79, "asin": "B07FKK8SFR", "rating": 5.0, "title": "PENGUINS", "text": "So so cute!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 80, "asin": "B0866QM41K", "rating": 5.0, "title": "Believe this is the best gift to give !", "text": "The recipient can choose what they want so the giver has less chance of a mistake.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 81, "asin": "B01MSBQB1P", "rating": 5.0, "title": "convenient", "text": "A great and convenient gift idea-price is right too!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 82, "asin": "B005ESMM04", "rating": 5.0, "title": "Five Stars", "text": "The gift card came in a pretty box.<br />Thanks Amozan.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 83, "asin": "B07641P3WL", "rating": 5.0, "title": "Best gift for someone you don\u2019t know what to get", "text": "This was for a gift", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 84, "asin": "B07674CBVT", "rating": 5.0, "title": "Great value", "text": "Made my shopping much better good value", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 85, "asin": "B07DDC8FJM", "rating": 5.0, "title": "Sweet gift!", "text": "I sent this to my brother and he couldn't stop talking about it. This boxes puts a little more nice into a gift. Very pretty!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 86, "asin": "B07HJD9FVV", "rating": 5.0, "title": "Amazing", "text": "It can be used for a variety of things.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 87, "asin": "B07FK7L976", "rating": 5.0, "title": "Great Holder", "text": "Great holder for gift cards", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 88, "asin": "B07HJHK8Y5", "rating": 5.0, "title": "Gift card", "text": "Makes these so easy for any holiday and especially stops buying something people do not like", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 89, "asin": "B076ZTSX5V", "rating": 5.0, "title": "Starbuck gift card", "text": "My friend like the gift card like the sweater for holiday card", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 90, "asin": "B00FTGTM5E", "rating": 5.0, "title": "Good litte thank-you gifts", "text": "I'm happy they did not cost me more than their face value to buy. I gave them out as a nice thank you to those who helped me with small things around my house. I sent them in the mail as a surprise, knowing money or gifts was not necessary. I recommend them.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 91, "asin": "B07GH6WX29", "rating": 3.0, "title": "Okay as a gift", "text": "After I bought several I realized I could have sent \"gift\" money via text without the fees or wait.", "true_label": "NEGATIVE", "predicted_label": "NEGATIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"NEGATIVE\"}"}, {"index": 92, "asin": "B07FMJVVKW", "rating": 5.0, "title": "Good gift", "text": "Those who already have everything, they can buy an audible book, an old rerun of a favorite movie, some little thing they may want, or whatever as a gift for any occasion. I recommend.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 93, "asin": "B07HJHK8Y5", "rating": 5.0, "title": "So convenient.", "text": "Arrived on time, in perfect shape, and best of all the person receiving the gift can buy whatever they want. One size fits all!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 94, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Just what was ordered.", "text": "Made holiday shopping easy!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 95, "asin": "B086KKT3RX", "rating": 5.0, "title": "Can Do It From Home", "text": "Usually I either receive an Amazon gift card as a birthday and/or Christmas gift or I purchase them at a store. Then it's very easy to add the amount to my gift card balance using my cell phone. Well I was stuck inside for several days due to a blizzard and I bought quite a few books then due to a travel ban I could not go to the store to purchase a gift card.<br />So after checking my Gift Card Balance I saw that I had overindulged and it needed to be topped up. One of the options under Manage Your Balance was to Reload Your Balance. I had never used this option but decided to try it. It was so easy to do and I didn't have to leave the comfort of my home. I will be using it again in the future.", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 96, "asin": "B00IX1I3G6", "rating": 5.0, "title": "Love it!", "text": "Love my card!!", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 97, "asin": "B086KKT3RX", "rating": 5.0, "title": "Easy to use", "text": "It\u2019s easy to use and very convenient. I would definitely consider refill more in the future", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 98, "asin": "B00IX1I3G6", "rating": 3.0, "title": "Easy to use", "text": "Very easy to use. I wish I knew about it earlier", "true_label": "NEGATIVE", "predicted_label": "POSITIVE", "correct": false, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}, {"index": 99, "asin": "B01K8RJDEI", "rating": 5.0, "title": "Perfect gift sent I a lovely container", "text": "Sent in a lovely container", "true_label": "POSITIVE", "predicted_label": "POSITIVE", "correct": true, "raw_model_output": "{\"sentiment\": \"POSITIVE\"}"}], "summary": {"total_reviews": 100, "unparsed_responses": 0, "overall_accuracy": 0.96, "class_distribution_in_batch": {"POSITIVE": 93, "NEGATIVE": 7}, "per_class_accuracy": {"POSITIVE": {"support": 93, "correct": 90, "accuracy": 0.967741935483871}, "NEGATIVE": {"support": 7, "correct": 6, "accuracy": 0.8571428571428571}}, "confusion_matrix": {"POSITIVE": {"POSITIVE": 90, "NEGATIVE": 3}, "NEGATIVE": {"POSITIVE": 1, "NEGATIVE": 6}}, "misclassified_indices": [17, 46, 62, 98]}}</script>
+<script>
+const DATA = JSON.parse(document.getElementById('app-data').textContent);
+
+function starString(rating) {
+  const full = Math.round(rating);
+  return '&#9733;'.repeat(full) + '&#9734;'.repeat(5 - full);
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n).trim() + '\u2026' : s;
+}
+
+function renderKpis() {
+  const s = DATA.summary;
+  const tiles = [
+    { label: 'Reviews scored', value: s.total_reviews, sub: s.unparsed_responses ? `${s.unparsed_responses} unparsed` : 'all parsed' },
+    { label: 'Overall accuracy', value: (s.overall_accuracy * 100).toFixed(1) + '%', sub: 'vs. rating-derived label' },
+    { label: 'POSITIVE accuracy', value: fmtPct(s.per_class_accuracy.POSITIVE.accuracy), sub: `support ${s.per_class_accuracy.POSITIVE.support}` },
+    { label: 'NEGATIVE accuracy', value: fmtPct(s.per_class_accuracy.NEGATIVE.accuracy), sub: `support ${s.per_class_accuracy.NEGATIVE.support}` },
+  ];
+  document.getElementById('kpi-row').innerHTML = tiles.map(t => `
+    <div class="card stat-tile">
+      <div class="label">${t.label}</div>
+      <div class="value">${t.value}</div>
+      <div class="sub">${t.sub}</div>
+    </div>`).join('');
+}
+function fmtPct(v) { return v === null || v === undefined ? 'n/a' : (v * 100).toFixed(1) + '%'; }
+
+function seqColor(frac) {
+  const steps = ['--seq-100','--seq-200','--seq-300','--seq-400','--seq-450','--seq-500','--seq-600','--seq-700'];
+  const idx = Math.min(steps.length - 1, Math.floor(frac * steps.length));
+  return `var(${steps[idx]})`;
+}
+
+function renderConfusion() {
+  const cm = DATA.summary.confusion_matrix;
+  const classes = Object.keys(cm);
+  let html = '<tr><th class="corner">true \\ pred</th>' + classes.map(c => `<th>${c}</th>`).join('') + '</tr>';
+  classes.forEach(t => {
+    const row = cm[t];
+    const rowTotal = Object.values(row).reduce((a,b) => a+b, 0) || 1;
+    html += `<tr><td class="rowlabel">${t}</td>`;
+    classes.forEach(p => {
+      const v = row[p] || 0;
+      const frac = v / rowTotal;
+      const textColor = frac > 0.55 ? '#fff' : 'var(--text-primary)';
+      html += `<td class="cell" style="background:${seqColor(frac)}; color:${textColor}">${v}</td>`;
+    });
+    html += '</tr>';
+  });
+  document.getElementById('confusion-table').innerHTML = html;
+}
+
+function renderReviews() {
+  const rows = DATA.records.map(r => {
+    const badgeClass = r.true_label === 'POSITIVE' ? 'pos' : 'neg';
+    const predClass = r.predicted_label === 'POSITIVE' ? 'pos' : (r.predicted_label === 'NEGATIVE' ? 'neg' : '');
+    const resultClass = r.correct ? 'correct' : 'incorrect';
+    const resultIcon = r.correct ? '&#10003;' : '&#10007;';
+    const resultLabel = r.correct ? 'Correct' : 'Incorrect';
+    return `<tr>
+      <td>${r.index}</td>
+      <td class="rating">${starString(r.rating)}</td>
+      <td class="review-title">${escapeHtml(r.title)}</td>
+      <td class="review-text">${escapeHtml(truncate(r.text, 160))}</td>
+      <td><span class="badge ${badgeClass}">${r.true_label}</span></td>
+      <td><span class="badge ${predClass}">${r.predicted_label ?? 'UNPARSED'}</span></td>
+      <td><span class="result ${resultClass}">${resultIcon} ${resultLabel}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('review-body').innerHTML = rows;
+}
+
+renderKpis();
+renderConfusion();
+renderReviews();
+</script>
+</body>
+</html>
