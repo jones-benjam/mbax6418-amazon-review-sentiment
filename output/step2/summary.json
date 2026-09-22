@@ -1,0 +1,37 @@
+{
+  "total_reviews": 100,
+  "unparsed_responses": 0,
+  "overall_accuracy": 0.96,
+  "class_distribution_in_batch": {
+    "POSITIVE": 93,
+    "NEGATIVE": 7
+  },
+  "per_class_accuracy": {
+    "POSITIVE": {
+      "support": 93,
+      "correct": 90,
+      "accuracy": 0.967741935483871
+    },
+    "NEGATIVE": {
+      "support": 7,
+      "correct": 6,
+      "accuracy": 0.8571428571428571
+    }
+  },
+  "confusion_matrix": {
+    "POSITIVE": {
+      "POSITIVE": 90,
+      "NEGATIVE": 3
+    },
+    "NEGATIVE": {
+      "POSITIVE": 1,
+      "NEGATIVE": 6
+    }
+  },
+  "misclassified_indices": [
+    17,
+    46,
+    62,
+    98
+  ]
+}
