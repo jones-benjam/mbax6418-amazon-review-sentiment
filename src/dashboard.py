@@ -1,22 +1,23 @@
 """
-Interactive Gradio dashboard (Step 3 + Step 4).
+Interactive Gradio dashboard (Steps 3-7).
 
-Replaces the earlier static-HTML dashboard generator. Reads the saved
-scoring output (records.json + summary.json) and serves an interactive
-app: headline KPIs, a confusion-matrix heatmap, and a per-review table
-the reader can filter (Step 4) with a live count.
+Shows two saved scoring runs side by side in tabs:
+  * Balanced three-class run (Step 6)  -- output/step6
+  * Lopsided first-100 binary run (Step 2) -- output/step2
+Everything on the page is computed from the saved records.json / summary.json;
+nothing is scored live.
 
 Run:
-    ./venv/bin/python src/dashboard.py [--records output/step2/records.json]
-        [--summary output/step2/summary.json] [--port 7860]
+    ./venv/bin/python src/dashboard.py [--balanced output/step6] [--lopsided output/step2] [--port 7860]
 """
 import argparse
 import html
 import json
+from pathlib import Path
 
 import gradio as gr
 
-# --- palette (light-mode slice of the project's validated palette) --------
+# --- palette (light-mode slice of the project's validated dataviz palette) ---
 SURFACE = "#fcfcfb"
 PAGE = "#f9f9f7"
 TEXT_PRIMARY = "#0b0b0b"
@@ -24,19 +25,22 @@ TEXT_SECONDARY = "#52514e"
 TEXT_MUTED = "#898781"
 GRIDLINE = "#e1e0d9"
 BORDER = "rgba(11,11,11,0.10)"
-SERIES_POS = "#2a78d6"   # blue
-SERIES_NEG = "#e34948"   # red
+BLUE = "#2a78d6"    # POSITIVE  (diverging pair: blue <-> red, gray midpoint)
+RED = "#e34948"     # NEGATIVE
+GRAY = "#898781"    # NEUTRAL
 STATUS_GOOD = "#0ca30c"
 STATUS_CRITICAL = "#d03b3b"
 SEQ_STEPS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#256abf", "#184f95", "#0d366b"]
+CLASS_COLOR = {"POSITIVE": BLUE, "NEUTRAL": GRAY, "NEGATIVE": RED}
+CLASS_TEXT = {"POSITIVE": BLUE, "NEUTRAL": TEXT_SECONDARY, "NEGATIVE": RED}
+UNPARSED = "UNPARSED"
 
 CUSTOM_CSS = f"""
 .gradio-container {{
     background: {PAGE} !important;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif !important;
-    /* Force the light palette regardless of the viewer's OS theme -- Gradio's
-       default theme otherwise pulls in dark-mode CSS variables that make our
-       inline text colors unreadable against a light surface. */
+    /* Gradio's default theme injects dark-mode CSS variables that turn our text
+       near-white on a light page. Override its theme variables directly. */
     color-scheme: light !important;
     --body-text-color: {TEXT_PRIMARY} !important;
     --body-text-color-subdued: {TEXT_MUTED} !important;
@@ -47,279 +51,328 @@ CUSTOM_CSS = f"""
     --border-color-primary: {BORDER} !important;
     --body-background-fill: {PAGE} !important;
     --input-background-fill: {SURFACE} !important;
-    --link-text-color: {SERIES_POS} !important;
+    --input-background-fill-focus: {SURFACE} !important;
+    --input-background-fill-hover: {SURFACE} !important;
+    --input-border-color: #c3c2b7 !important;
+    --input-border-color-hover: {TEXT_MUTED} !important;
+    --input-border-color-focus: {BLUE} !important;
+    --input-shadow-focus: 0 0 0 1px {BLUE} !important;
+    --input-placeholder-color: {TEXT_MUTED} !important;
+    --table-row-focus: {PAGE} !important;
+    --link-text-color: {BLUE} !important;
 }}
 .gradio-container, .gradio-container .prose, .gradio-container .prose * {{ color: {TEXT_PRIMARY} !important; }}
-#kpi-row {{ gap: 14px; }}
-.stat-tile {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 18px 20px; }}
+.gradio-container table, .gradio-container tr, .gradio-container th, .gradio-container td {{
+    border: 0 !important; border-color: {GRIDLINE} !important;
+}}
+.stat-tile {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 16px 18px; }}
 .stat-tile .label {{ font-size: 12px; color: {TEXT_SECONDARY}; margin-bottom: 6px; }}
 .stat-tile .value {{ font-size: 28px; font-weight: 700; color: {TEXT_PRIMARY}; letter-spacing: -0.01em; }}
-.stat-tile .sub {{ font-size: 12px; color: {TEXT_MUTED}; margin-top: 4px; }}
+.stat-tile .sub {{ font-size: 12px; color: {TEXT_MUTED}; margin-top: 4px; line-height: 1.4; }}
+.tile-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }}
 """
 
 
-def load_dataset(records_path: str, summary_path: str) -> dict:
-    with open(records_path) as f:
+# ----------------------------------------------------------------- helpers --
+def esc(value) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+def pct(v, digits: int = 1) -> str:
+    return "n/a" if v is None else f"{v * 100:.{digits}f}%"
+
+
+def tile(label: str, value: str, sub: str = "") -> str:
+    return (f'<div class="stat-tile"><div class="label">{esc(label)}</div>'
+            f'<div class="value">{value}</div><div class="sub">{sub}</div></div>')
+
+
+def card(inner: str, pad: str = "18px 20px") -> str:
+    return f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:{pad};">{inner}</div>'
+
+
+def load_run(run_dir: str) -> dict:
+    d = Path(run_dir)
+    with open(d / "records.json") as f:
         records = json.load(f)
-    with open(summary_path) as f:
+    with open(d / "summary.json") as f:
         summary = json.load(f)
-    return {"records": records, "summary": summary}
+    sens = d / "seed_sensitivity.json"
+    sensitivity = None
+    if sens.exists():
+        with open(sens) as f:
+            sensitivity = json.load(f)
+    return {"records": records, "summary": summary, "sensitivity": sensitivity}
 
 
-def imbalance_note(summary: dict) -> str:
-    dist = summary["class_distribution_in_batch"]
-    total = sum(dist.values())
-    parts = [f"{cls} {count} ({count/total:.0%})" for cls, count in dist.items()]
-    dominant = max(dist, key=dist.get)
-    return (
-        f"This batch's rating-derived labels are {', '.join(parts)}. "
-        f"With {dominant} dominating, a high overall-accuracy number is easy to reach just by "
-        f"getting the majority class right — it is not by itself evidence the model handles the "
-        f"minority class well. Balanced sampling across classes arrives in Step 6."
-    )
+# ------------------------------------------------------------ page sections --
+def hidden_note(meta: dict) -> str:
+    n = meta.get("titles_hidden_from_model", 0)
+    if not meta.get("mask_star_titles", True) or not n:
+        return ""
+    return (f' &mdash; including in review titles: {n} reviews had a title that only states the star count '
+            f'(e.g. &ldquo;Three Stars&rdquo;), which would leak the answer, so those titles were hidden from the model')
 
 
-def render_kpis(summary: dict) -> str:
-    pos = summary["per_class_accuracy"]["POSITIVE"]
-    neg = summary["per_class_accuracy"]["NEGATIVE"]
+def render_run_header(summary: dict) -> str:
+    m = summary["meta"]
+    s = m["sample"]
+    if s["method"] == "balanced":
+        how = (f'{s["per_class"]} reviews per class drawn at random from the whole file '
+               f'(seed {s["seed"]}), {len(summary["classes"])}-class labels')
+    else:
+        how = f'the first {s["n"]} reviews in file order, {len(summary["classes"])}-class labels'
+    return (f'<div style="font-size:13px;color:{TEXT_SECONDARY};line-height:1.6;">'
+            f'<strong style="color:{TEXT_PRIMARY};">Sample:</strong> {esc(how)}. '
+            f'<strong style="color:{TEXT_PRIMARY};">Model:</strong> {esc(m["model"])} '
+            f'(temperature {m["settings"]["temperature"]}). '
+            f'The star rating is the answer key (4-5 POSITIVE, 3 NEUTRAL, 1-2 NEGATIVE) and is never shown to the model'
+            f'{hidden_note(m)}.</div>')
 
-    def pct(v):
-        return "n/a" if v is None else f"{v * 100:.1f}%"
 
+def render_headline_tiles(summary: dict) -> str:
+    base = summary["majority_baseline"]
+    unp = summary["unparsed_responses"]
     tiles = [
-        ("Reviews scored", str(summary["total_reviews"]),
-         f"{summary['unparsed_responses']} unparsed" if summary["unparsed_responses"] else "all parsed"),
-        ("Overall accuracy", f"{summary['overall_accuracy'] * 100:.1f}%", "vs. rating-derived label"),
-        ("POSITIVE accuracy", pct(pos["accuracy"]), f"support {pos['support']}"),
-        ("NEGATIVE accuracy", pct(neg["accuracy"]), f"support {neg['support']}"),
+        tile("Reviews scored", str(summary["total_reviews"]),
+             f"{unp} unparsed (counted as wrong)" if unp else "all answers parsed"),
+        tile("Overall accuracy", pct(summary["overall_accuracy"]), "share of reviews where the model matched the rating-derived label"),
+        tile("Balanced accuracy", pct(summary["balanced_accuracy"]), "average of the per-class recalls, so every class counts equally"),
+        tile("Always-guess-" + base["class"], pct(base["accuracy"]), "what a model that ignores the review entirely would score"),
     ]
-    cells = "".join(
-        f'<div class="stat-tile"><div class="label">{label}</div>'
-        f'<div class="value">{value}</div><div class="sub">{sub}</div></div>'
-        for label, value, sub in tiles
-    )
-    return f'<div id="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">{cells}</div>'
+    return f'<div class="tile-grid">{"".join(tiles)}</div>'
 
 
-def render_callout(summary: dict) -> str:
-    return (
-        f'<div style="display:flex;gap:10px;align-items:flex-start;background:{SURFACE};'
-        f'border:1px solid {BORDER};border-left:3px solid {STATUS_CRITICAL};border-radius:8px;'
-        f'padding:14px 16px;font-size:13px;color:{TEXT_SECONDARY};line-height:1.55;">'
-        f'<span style="color:{STATUS_CRITICAL};font-weight:700;flex-shrink:0;">&#9888;</span>'
-        f'<div><strong style="color:{TEXT_PRIMARY};">Imbalance warning.</strong> {imbalance_note(summary)}</div>'
-        f'</div>'
-    )
+def render_class_tiles(summary: dict) -> str:
+    tiles = []
+    for c, s in summary["per_class"].items():
+        ci = f'95% CI {pct(s["ci_low"], 0)}&ndash;{pct(s["ci_high"], 0)}' if s["ci_low"] is not None else ""
+        sub = f'{s["correct"]} of {s["support"]} {esc(c)} reviews correct &middot; {ci}'
+        tiles.append(
+            f'<div class="stat-tile" style="border-top:3px solid {CLASS_COLOR.get(c, GRAY)};">'
+            f'<div class="label">{esc(c)} recall (how often a true {esc(c)} review is answered right)</div>'
+            f'<div class="value">{pct(s["recall"])}</div><div class="sub">{sub}</div></div>')
+    return f'<div class="tile-grid">{"".join(tiles)}</div>'
 
 
-def render_emotion_summary(summary: dict) -> str:
-    ea = summary["emotion_agreement"]
-    all_emotions = sorted(
-        set(ea["llm_emotion_distribution"]) | set(ea["wordlist_emotion_distribution"])
-    )
-    rows = ""
-    for e in all_emotions:
-        llm_n = ea["llm_emotion_distribution"].get(e, 0)
-        wl_n = ea["wordlist_emotion_distribution"].get(e, 0)
-        rows += (
-            f'<tr><td style="padding:8px 16px;color:{TEXT_SECONDARY};font-weight:600;">{e}</td>'
-            f'<td style="padding:8px 16px;text-align:right;color:{TEXT_PRIMARY};">{llm_n}</td>'
-            f'<td style="padding:8px 16px;text-align:right;color:{TEXT_PRIMARY};">{wl_n}</td></tr>'
-        )
-    agreement_pct = "n/a" if ea["agreement_rate"] is None else f"{ea['agreement_rate'] * 100:.1f}%"
-
-    tiles = [
-        ("Emotion agreement", agreement_pct,
-         f"{ea['agree_count']}/{ea['reviews_with_both_emotions']} reviews where both had an answer"),
-        ("Word list found nothing", str(ea["reviews_wordlist_had_no_lexicon_words"]),
-         "reviews with zero lexicon-word hits"),
-    ]
-    tile_html = "".join(
-        f'<div class="stat-tile"><div class="label">{label}</div>'
-        f'<div class="value">{value}</div><div class="sub">{sub}</div></div>'
-        for label, value, sub in tiles
-    )
-
-    return (
-        f'<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">'
-        f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;flex:1;min-width:280px;">{tile_html}</div>'
-        f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:16px 18px;min-width:280px;">'
-        f'<table style="border-collapse:collapse;font-size:13px;width:100%;">'
-        f'<tr><th style="text-align:left;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">Emotion</th>'
-        f'<th style="text-align:right;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">LLM</th>'
-        f'<th style="text-align:right;padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;">Word list</th></tr>'
-        f'{rows}</table></div></div>'
-    )
+def render_callout(run: dict) -> str:
+    summary, sens = run["summary"], run["sensitivity"]
+    m = summary["meta"]
+    ds = m["dataset"]
+    total = ds["total_rows"]
+    file_mix = ", ".join(f'{c} {n / total:.1%}' for c, n in ds["class_counts"].items())
+    base = summary["majority_baseline"]
+    if m["sample"]["method"] == "first":
+        dist = summary["class_distribution"]
+        n = summary["total_reviews"]
+        mix = ", ".join(f"{c} {k} ({k / n:.0%})" for c, k in dist.items())
+        minority = min(summary["per_class"].items(), key=lambda kv: kv[1]["support"])
+        ci = minority[1]
+        body = (f"This batch is {mix}. A model that just answered {base['class']} every time would already "
+                f"score {pct(base['accuracy'])}, so the model's {pct(summary['overall_accuracy'])} overall is only "
+                f"{(summary['overall_accuracy'] - base['accuracy']) * 100:.0f} points above that. Balanced accuracy "
+                f"(every class weighted equally) is {pct(summary['balanced_accuracy'])}, and the "
+                f"{minority[0]} result rests on just {ci['support']} reviews (95% CI "
+                f"{pct(ci['ci_low'], 0)}&ndash;{pct(ci['ci_high'], 0)}). Whole file: {file_mix}.")
+        title, color = "Imbalance warning.", STATUS_CRITICAL
+    else:
+        s = m["sample"]
+        body = (f"Balanced by design: {s['per_class']} reviews per class, seed {s['seed']}. The real file is "
+                f"{file_mix} &mdash; these per-class numbers say how the model does on each kind of review, "
+                f"<em>not</em> how it would score on the real mix. With only {s['per_class']} per class the "
+                f"intervals are wide.")
+        if sens:
+            accs = [v["overall_accuracy"] for v in sens.values()]
+            body += (f" Across {len(sens)} different random draws (this seed included), overall accuracy ranged from "
+                     f"{pct(min(accs))} to {pct(max(accs))}.")
+        title, color = "Read these numbers carefully.", STATUS_GOOD
+    return (f'<div style="display:flex;gap:10px;align-items:flex-start;background:{SURFACE};border:1px solid {BORDER};'
+            f'border-left:3px solid {color};border-radius:8px;padding:14px 16px;font-size:13px;color:{TEXT_SECONDARY};'
+            f'line-height:1.55;"><div><strong style="color:{TEXT_PRIMARY};">{title}</strong> {body}</div></div>')
 
 
 def render_confusion(summary: dict) -> str:
     cm = summary["confusion_matrix"]
-    classes = list(cm.keys())
-    header = "".join(f'<th style="padding:12px 18px;color:{TEXT_MUTED};font-size:11px;'
-                      f'text-transform:uppercase;">{c}</th>' for c in classes)
+    classes = summary["classes"]
+    show_unparsed = any(cm[t][UNPARSED] for t in classes)
+    cols = classes + ([UNPARSED] if show_unparsed else [])
+    th = f'padding:10px 18px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;text-align:center;'
+    head = "".join(f'<th style="{th}">{esc(c)}</th>' for c in cols)
     rows = ""
     for t in classes:
-        row = cm[t]
-        row_total = sum(row.values()) or 1
-        rowlabel = (f'<td style="padding:12px 18px;text-align:right;color:{TEXT_SECONDARY};'
-                    f'font-weight:600;">{t}</td>')
+        total = sum(cm[t].values()) or 1
         cells = ""
-        for p in classes:
-            v = row.get(p, 0)
-            frac = v / row_total
-            idx = min(len(SEQ_STEPS) - 1, int(frac * len(SEQ_STEPS)))
-            color = SEQ_STEPS[idx]
-            text_color = "#fff" if frac > 0.55 else TEXT_PRIMARY
-            cells += (f'<td style="padding:12px 18px;text-align:center;font-weight:700;'
-                      f'font-size:16px;border-radius:6px;background:{color};color:{text_color};">{v}</td>')
-        rows += f"<tr>{rowlabel}{cells}</tr>"
-    return (
-        f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:20px 22px;">'
-        f'<table style="border-collapse:collapse;font-size:13px;">'
-        f'<tr><th></th>{header}</tr>{rows}</table>'
-        f'<div style="font-size:12px;color:{TEXT_MUTED};margin-top:10px;max-width:420px;line-height:1.6;">'
-        f"Rows = rating-derived ground truth. Columns = model prediction. "
-        f"Darker cells hold more reviews (shaded relative to that row's total).</div></div>"
-    )
+        for p in cols:
+            v = cm[t][p]
+            frac = v / total
+            shade = SEQ_STEPS[min(len(SEQ_STEPS) - 1, int(frac * len(SEQ_STEPS)))]
+            fg = "#fff" if frac > 0.55 else TEXT_PRIMARY
+            tip = f"{v} of {total} true {t} reviews were answered {p} ({frac:.0%})"
+            cells += (f'<td title="{esc(tip)}" style="padding:12px 18px;text-align:center;border-radius:6px;'
+                      f'background:{shade};color:{fg};"><div style="font-size:18px;font-weight:700;">{v}</div>'
+                      f'<div style="font-size:11px;opacity:.85;">{frac:.0%}</div></td>')
+        rows += (f'<tr><td style="padding:12px 14px;text-align:right;font-weight:600;color:{TEXT_SECONDARY};">'
+                 f'{esc(t)}</td>{cells}</tr>')
+    note = (f'<div style="font-size:12px;color:{TEXT_MUTED};margin-top:10px;max-width:520px;line-height:1.6;">'
+            f'Rows = the answer key from the star rating. Columns = what the model said. The diagonal is correct; '
+            f'everything off it is a mistake and shows which class got mistaken for which. Percentages are of that row; '
+            f'darker = larger share.</div>')
+    return card(f'<table style="border-collapse:separate;border-spacing:3px;font-size:13px;">'
+                f'<tr><th></th>{head}</tr>{rows}</table>{note}', "20px 22px")
 
 
+def render_emotion_summary(summary: dict) -> str:
+    ea = summary["emotion_agreement"]
+    emotions = sorted(set(ea["llm_emotion_distribution"]) | set(ea["wordlist_emotion_distribution"]))
+    th = f'padding:8px 16px;color:{TEXT_MUTED};font-size:11px;text-transform:uppercase;'
+    line = f"border-bottom:1px solid {GRIDLINE} !important;"
+    rows = "".join(
+        f'<tr><td style="padding:8px 16px;{line}color:{TEXT_SECONDARY};font-weight:600;">{esc(e)}</td>'
+        f'<td style="padding:8px 16px;{line}text-align:right;">{ea["llm_emotion_distribution"].get(e, 0)}</td>'
+        f'<td style="padding:8px 16px;{line}text-align:right;">{ea["wordlist_emotion_distribution"].get(e, 0)}</td></tr>'
+        for e in emotions)
+    tiles = "".join([
+        tile("Emotion agreement", pct(ea["agreement_rate"]),
+             f'{ea["agree_count"]} of {ea["reviews_with_both_emotions"]} reviews where both methods gave an answer'),
+        tile("Word list found nothing", str(ea["reviews_wordlist_had_no_lexicon_words"]), "reviews with zero lexicon-word hits"),
+        tile("LLM gave no valid emotion", str(ea["reviews_llm_had_no_valid_emotion"]), "answer was outside the 8 allowed emotions"),
+    ])
+    table = card(f'<table style="border-collapse:collapse;font-size:13px;width:100%;">'
+                 f'<tr><th style="{th}text-align:left;">Emotion</th><th style="{th}text-align:right;">LLM</th>'
+                 f'<th style="{th}text-align:right;">Word list</th></tr>{rows}</table>', "12px 14px")
+    return (f'<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">'
+            f'<div class="tile-grid" style="flex:2;min-width:300px;">{tiles}</div>'
+            f'<div style="flex:1;min-width:260px;">{table}</div></div>')
+
+
+# -------------------------------------------------------------- review table --
 def star_string(rating: float) -> str:
-    full = round(rating)
+    full = max(0, min(5, round(rating)))
     return "★" * full + "☆" * (5 - full)
 
 
-def filter_records(records: list[dict], mode: str) -> list[dict]:
-    if mode == "Correct only":
-        return [r for r in records if r["correct"]]
-    if mode == "Incorrect only":
-        return [r for r in records if not r["correct"]]
-    if mode == "True label: POSITIVE":
-        return [r for r in records if r["true_label"] == "POSITIVE"]
-    if mode == "True label: NEGATIVE":
-        return [r for r in records if r["true_label"] == "NEGATIVE"]
-    if mode == "Emotions agree":
-        return [r for r in records if r["emotions_agree"]]
-    if mode == "Emotions differ":
-        return [r for r in records if r["llm_emotion"] and r["wordlist_emotion"] and not r["emotions_agree"]]
-    return records
+def build_filters(records: list, summary: dict) -> dict:
+    classes = summary["classes"]
+    cm = summary["confusion_matrix"]
+    f = {
+        "All": lambda r: True,
+        "Correct only": lambda r: r["correct"],
+        "Incorrect only": lambda r: not r["correct"],
+    }
+    for c in classes:
+        f[f"True label: {c}"] = lambda r, c=c: r["true_label"] == c
+    for k in sorted({int(r["rating"]) for r in records}):
+        f[f"Rating: {k} star{'s' if k != 1 else ''}"] = lambda r, k=k: int(r["rating"]) == k
+    for t in classes:
+        for p in classes + [UNPARSED]:
+            n = cm[t][p]
+            if t != p and n:
+                f[f"Mistake: true {t} → answered {p} ({n})"] = (
+                    lambda r, t=t, p=p: r["true_label"] == t and (r["predicted_label"] or UNPARSED) == p)
+    f["Emotions agree"] = lambda r: r["emotions_agree"]
+    f["Emotions differ"] = lambda r: bool(r["llm_emotion"] and r["wordlist_emotion"] and not r["emotions_agree"])
+    return f
 
 
-def render_review_rows(records: list[dict]) -> str:
+def hidden_tag(r: dict) -> str:
+    """Marks titles that only state the star count: the model never saw them."""
+    if not r.get("title_masked"):
+        return ""
+    return (f'<div style="font-weight:400;font-size:11px;color:{TEXT_MUTED};" '
+            f'title="A title that only states the star count would reveal the rating, so it was hidden from the model.">'
+            f'hidden from model</div>')
+
+
+def render_review_rows(records: list) -> str:
+    cell = f'padding:10px 14px;border-bottom:1px solid {GRIDLINE} !important;'
     rows = ""
     for r in records:
-        badge_color = SERIES_POS if r["true_label"] == "POSITIVE" else SERIES_NEG
         pred = r["predicted_label"]
-        pred_color = SERIES_POS if pred == "POSITIVE" else (SERIES_NEG if pred == "NEGATIVE" else TEXT_MUTED)
-        result_color = STATUS_GOOD if r["correct"] else STATUS_CRITICAL
-        result_text = "✓ Correct" if r["correct"] else "✗ Incorrect"
         text = r["text"] or ""
-        text = (text[:160].strip() + "…") if len(text) > 160 else text
-        # Review title/text is real user-generated Amazon content -- it can
-        # (and does, ~3% of this dataset) contain literal HTML like "<br />"
-        # from the original listing. Un-escaped, the browser renders that as
-        # real markup instead of visible text, corrupting the row and, in the
-        # worst case, letting review content inject arbitrary HTML/JS into
-        # the page. Escape before embedding.
-        safe_title = html.escape(r["title"] or "")
-        safe_text = html.escape(text)
+        short = (text[:200].strip() + "…") if len(text) > 200 else text
+        agree = r["emotions_agree"]
+        # Review text is untrusted user content (and often contains literal "<br />"): always escape.
         rows += (
             f'<tr>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_MUTED};">{r["index"]}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_MUTED};'
-            f'white-space:nowrap;">{star_string(r["rating"])}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};font-weight:600;">{safe_title}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
-            f'max-width:340px;">{safe_text}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{badge_color};'
-            f'font-weight:600;white-space:nowrap;">{r["true_label"]}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{pred_color};'
-            f'font-weight:600;white-space:nowrap;">{pred or "UNPARSED"}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{result_color};'
-            f'font-weight:600;white-space:nowrap;">{result_text}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
-            f'white-space:nowrap;">{r["llm_emotion"] or "—"}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{TEXT_SECONDARY};'
-            f'white-space:nowrap;">{r["wordlist_emotion"] or "—"}</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid {GRIDLINE};color:{STATUS_GOOD if r["emotions_agree"] else TEXT_MUTED};'
-            f'white-space:nowrap;">{"✓ Agree" if r["emotions_agree"] else "—"}</td>'
-            f'</tr>'
-        )
+            f'<td title="row {r["file_index"]} of Gift_Cards.jsonl" style="{cell}color:{TEXT_MUTED};">{r["index"]}</td>'
+            f'<td style="{cell}color:{TEXT_MUTED};white-space:nowrap;">{star_string(r["rating"])}</td>'
+            f'<td style="{cell}font-weight:600;">{esc(r["title"])}{hidden_tag(r)}</td>'
+            f'<td title="{esc(text)}" style="{cell}color:{TEXT_SECONDARY};min-width:260px;max-width:380px;">{esc(short)}</td>'
+            f'<td style="{cell}color:{CLASS_TEXT.get(r["true_label"], TEXT_SECONDARY)};font-weight:600;white-space:nowrap;">{esc(r["true_label"])}</td>'
+            f'<td style="{cell}color:{CLASS_TEXT.get(pred, TEXT_MUTED)};font-weight:600;white-space:nowrap;">{esc(pred or UNPARSED)}</td>'
+            f'<td style="{cell}color:{STATUS_GOOD if r["correct"] else STATUS_CRITICAL};font-weight:600;white-space:nowrap;">'
+            f'{"✓ Correct" if r["correct"] else "✗ Incorrect"}</td>'
+            f'<td style="{cell}color:{TEXT_SECONDARY};white-space:nowrap;">{esc(r["llm_emotion"] or "—")}</td>'
+            f'<td style="{cell}color:{TEXT_SECONDARY};white-space:nowrap;">{esc(r["wordlist_emotion"] or "—")}</td>'
+            f'<td style="{cell}color:{STATUS_GOOD if agree else TEXT_MUTED};white-space:nowrap;">{"✓ Agree" if agree else "—"}</td>'
+            f'</tr>')
+    heads = ["#", "Rating", "Title", "Text", "True label", "Model said", "Result", "LLM emotion", "Word-list emotion", "Emotions"]
     header = "".join(
-        f'<th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;'
-        f'color:{TEXT_MUTED};border-bottom:1px solid {GRIDLINE};">{h}</th>'
-        for h in ["#", "Rating", "Title", "Text", "True label", "Predicted", "Result",
-                  "LLM emotion", "Word-list emotion", "Emotions"]
-    )
-    return (
-        f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;overflow:hidden;">'
-        f'<div style="max-height:520px;overflow:auto;">'
-        f'<table style="border-collapse:collapse;width:100%;min-width:760px;font-size:13px;">'
-        f'<thead style="position:sticky;top:0;background:{SURFACE};"><tr>{header}</tr></thead>'
-        f'<tbody>{rows}</tbody></table></div></div>'
-    )
+        f'<th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;color:{TEXT_MUTED};'
+        f'border-bottom:1px solid {GRIDLINE} !important;">{h}</th>' for h in heads)
+    return (f'<div style="background:{SURFACE};border:1px solid {BORDER};border-radius:12px;overflow:hidden;">'
+            f'<div style="max-height:520px;overflow:auto;">'
+            f'<table style="border-collapse:collapse;width:100%;min-width:900px;font-size:13px;">'
+            f'<thead style="position:sticky;top:0;background:{SURFACE};"><tr>{header}</tr></thead>'
+            f'<tbody>{rows}</tbody></table></div></div>')
 
 
-def build_app(records_path: str, summary_path: str) -> gr.Blocks:
-    dataset = load_dataset(records_path, summary_path)
-    records, summary = dataset["records"], dataset["summary"]
+# ------------------------------------------------------------------- the app --
+def build_run_view(run: dict) -> None:
+    """Lay out one run's sections inside the current Gradio container."""
+    records, summary = run["records"], run["summary"]
+    filters = build_filters(records, summary)
 
-    filter_choices = [
-        "All", "Correct only", "Incorrect only",
-        "True label: POSITIVE", "True label: NEGATIVE",
-        "Emotions agree", "Emotions differ",
-    ]
+    gr.HTML(render_run_header(summary))
+    gr.HTML(render_headline_tiles(summary))
+    gr.HTML(render_class_tiles(summary))
+    gr.HTML(render_callout(run))
+    gr.Markdown("### Which answers were right, and which class got mistaken for which")
+    gr.HTML(render_confusion(summary))
+    gr.Markdown("### Primary emotion: LLM vs. NRC word list")
+    gr.HTML(render_emotion_summary(summary))
 
-    with gr.Blocks(css=CUSTOM_CSS, title="Gift Card Review Sentiment Dashboard") as demo:
+    gr.Markdown("### Every review")
+    with gr.Row():
+        dropdown = gr.Dropdown(choices=list(filters), value="All", label="Show", scale=1)
+        count = gr.Markdown(f"Showing **{len(records)}** of **{len(records)}** reviews")
+    table = gr.HTML(render_review_rows(records))
+
+    def on_change(choice):
+        kept = [r for r in records if filters[choice](r)]
+        return render_review_rows(kept), f"Showing **{len(kept)}** of **{len(records)}** reviews"
+
+    dropdown.change(on_change, inputs=dropdown, outputs=[table, count])
+
+
+def build_app(balanced_dir: str, lopsided_dir: str) -> gr.Blocks:
+    balanced, lopsided = load_run(balanced_dir), load_run(lopsided_dir)
+    with gr.Blocks(title="Gift Card Review Sentiment Dashboard") as demo:
         gr.Markdown("# Gift Card Review Sentiment Dashboard")
         gr.Markdown(
-            "LLM sentiment + emotion classification vs. star-rating ground truth — "
-            "Step 2 data: first 100 reviews, file order (binary POSITIVE/NEGATIVE)."
-        )
-
-        gr.HTML(render_kpis(summary))
-        gr.HTML(render_callout(summary))
-        gr.Markdown("### Confusion matrix")
-        gr.HTML(render_confusion(summary))
-        gr.Markdown("### Primary emotion: LLM vs. NRC word list")
-        gr.HTML(render_emotion_summary(summary))
-
-        gr.Markdown("### Per-review detail")
-        with gr.Row():
-            filter_dropdown = gr.Dropdown(choices=filter_choices, value="All", label="Filter", scale=1)
-            count_label = gr.Markdown(f"Showing **{len(records)}** of **{len(records)}** reviews", elem_id="count-label")
-        review_table = gr.HTML(render_review_rows(records))
-
-        def on_filter_change(mode):
-            filtered = filter_records(records, mode)
-            count_text = f"Showing **{len(filtered)}** of **{len(records)}** reviews"
-            return render_review_rows(filtered), count_text
-
-        filter_dropdown.change(
-            fn=on_filter_change,
-            inputs=filter_dropdown,
-            outputs=[review_table, count_label],
-        )
-
+            "How well does an LLM read the sentiment and emotion of Amazon gift-card reviews, judged against "
+            "the reviewers' own star ratings? Two runs are shown: a balanced three-class run (the fair test) "
+            "and the original lopsided first-100 run (which flatters the model).")
+        with gr.Tabs():
+            with gr.Tab("Balanced 3-class run (Step 6)"):
+                build_run_view(balanced)
+            with gr.Tab("Lopsided first-100 run (Step 2)"):
+                build_run_view(lopsided)
         gr.Markdown(
-            "---\n"
-            "Data: Amazon Reviews '23 “Gift Cards” category (McAuley Lab, UC San Diego). "
-            "Sentiment predicted by an LLM from review title/text only — the star rating is used "
-            "solely to check the model afterward."
-        )
-
+            "---\nData: Amazon Reviews '23, “Gift Cards” category (McAuley Lab, UC San Diego) — "
+            "https://amazon-reviews-2023.github.io. Sentiment and emotion are predicted by an LLM from the "
+            "review title and text only; the star rating is used solely to check the model afterward.")
     return demo
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--records", default="output/step2/records.json")
-    parser.add_argument("--summary", default="output/step2/summary.json")
+    parser.add_argument("--balanced", default="output/step6")
+    parser.add_argument("--lopsided", default="output/step2")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true")
     args = parser.parse_args()
-
-    demo = build_app(args.records, args.summary)
-    demo.launch(server_port=args.port, share=args.share)
+    build_app(args.balanced, args.lopsided).launch(server_port=args.port, share=args.share, css=CUSTOM_CSS)
 
 
 if __name__ == "__main__":

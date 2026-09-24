@@ -1,0 +1,172 @@
+{
+  "meta": {
+    "mode": "three",
+    "sample": {
+      "method": "balanced",
+      "per_class": 50,
+      "seed": 42,
+      "n": 150
+    },
+    "model": "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
+    "settings": {
+      "temperature": 0,
+      "seed": 0,
+      "max_tokens": 60,
+      "enable_thinking": false
+    },
+    "dataset": {
+      "total_rows": 152410,
+      "rating_counts": {
+        "1": 12326,
+        "2": 1873,
+        "3": 3271,
+        "4": 6692,
+        "5": 128248
+      },
+      "class_counts": {
+        "POSITIVE": 134940,
+        "NEUTRAL": 3271,
+        "NEGATIVE": 14199
+      }
+    },
+    "mask_star_titles": true,
+    "titles_hidden_from_model": 22
+  },
+  "classes": [
+    "POSITIVE",
+    "NEUTRAL",
+    "NEGATIVE"
+  ],
+  "total_reviews": 150,
+  "unparsed_responses": 0,
+  "truncated_responses": 0,
+  "overall_accuracy": 0.7333333333333333,
+  "balanced_accuracy": 0.7333333333333334,
+  "majority_baseline": {
+    "class": "POSITIVE",
+    "accuracy": 0.3333333333333333
+  },
+  "class_distribution": {
+    "POSITIVE": 50,
+    "NEUTRAL": 50,
+    "NEGATIVE": 50
+  },
+  "per_class": {
+    "POSITIVE": {
+      "support": 50,
+      "correct": 49,
+      "recall": 0.98,
+      "ci_low": 0.8950431352816304,
+      "ci_high": 0.9964608319110235,
+      "predicted": 55,
+      "precision": 0.8909090909090909
+    },
+    "NEUTRAL": {
+      "support": 50,
+      "correct": 14,
+      "recall": 0.28,
+      "ci_low": 0.17474014357680362,
+      "ci_high": 0.4166538714598967,
+      "predicted": 16,
+      "precision": 0.875
+    },
+    "NEGATIVE": {
+      "support": 50,
+      "correct": 47,
+      "recall": 0.94,
+      "ci_low": 0.8378265662912299,
+      "ci_high": 0.9793854036353695,
+      "predicted": 79,
+      "precision": 0.5949367088607594
+    }
+  },
+  "confusion_matrix": {
+    "POSITIVE": {
+      "POSITIVE": 49,
+      "NEUTRAL": 0,
+      "NEGATIVE": 1,
+      "UNPARSED": 0
+    },
+    "NEUTRAL": {
+      "POSITIVE": 5,
+      "NEUTRAL": 14,
+      "NEGATIVE": 31,
+      "UNPARSED": 0
+    },
+    "NEGATIVE": {
+      "POSITIVE": 1,
+      "NEUTRAL": 2,
+      "NEGATIVE": 47,
+      "UNPARSED": 0
+    }
+  },
+  "misclassified_indices": [
+    2,
+    7,
+    11,
+    14,
+    26,
+    27,
+    38,
+    45,
+    48,
+    49,
+    50,
+    51,
+    60,
+    63,
+    70,
+    72,
+    75,
+    76,
+    77,
+    81,
+    85,
+    91,
+    94,
+    104,
+    107,
+    113,
+    118,
+    119,
+    121,
+    122,
+    123,
+    124,
+    132,
+    133,
+    135,
+    136,
+    137,
+    141,
+    145,
+    146
+  ],
+  "emotion_agreement": {
+    "reviews_with_both_emotions": 123,
+    "reviews_wordlist_had_no_lexicon_words": 25,
+    "reviews_llm_had_no_valid_emotion": 2,
+    "agree_count": 20,
+    "agreement_rate": 0.16260162601626016,
+    "llm_emotion_distribution": {
+      "anger": 71,
+      "anticipation": 2,
+      "disgust": 2,
+      "fear": 2,
+      "joy": 52,
+      "sadness": 3,
+      "surprise": 3,
+      "trust": 13
+    },
+    "wordlist_emotion_distribution": {
+      "anger": 7,
+      "anticipation": 68,
+      "disgust": 2,
+      "fear": 4,
+      "joy": 17,
+      "sadness": 7,
+      "surprise": 1,
+      "trust": 19
+    }
+  }
+}

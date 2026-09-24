@@ -1,0 +1,66 @@
+{
+  "42": {
+    "overall_accuracy": 0.7333333333333333,
+    "balanced_accuracy": 0.7333333333333334,
+    "recall": {
+      "POSITIVE": 0.98,
+      "NEUTRAL": 0.28,
+      "NEGATIVE": 0.94
+    },
+    "neutral_row": {
+      "POSITIVE": 5,
+      "NEUTRAL": 14,
+      "NEGATIVE": 31
+    },
+    "four_star_in_sample": 0,
+    "titles_hidden": 22
+  },
+  "7": {
+    "overall_accuracy": 0.7,
+    "balanced_accuracy": 0.7000000000000001,
+    "recall": {
+      "POSITIVE": 0.94,
+      "NEUTRAL": 0.28,
+      "NEGATIVE": 0.88
+    },
+    "neutral_row": {
+      "POSITIVE": 1,
+      "NEUTRAL": 14,
+      "NEGATIVE": 35
+    },
+    "four_star_in_sample": 2,
+    "titles_hidden": 24
+  },
+  "123": {
+    "overall_accuracy": 0.7066666666666667,
+    "balanced_accuracy": 0.7066666666666667,
+    "recall": {
+      "POSITIVE": 0.96,
+      "NEUTRAL": 0.22,
+      "NEGATIVE": 0.94
+    },
+    "neutral_row": {
+      "POSITIVE": 3,
+      "NEUTRAL": 11,
+      "NEGATIVE": 36
+    },
+    "four_star_in_sample": 0,
+    "titles_hidden": 16
+  },
+  "2024": {
+    "overall_accuracy": 0.72,
+    "balanced_accuracy": 0.7200000000000001,
+    "recall": {
+      "POSITIVE": 0.86,
+      "NEUTRAL": 0.32,
+      "NEGATIVE": 0.98
+    },
+    "neutral_row": {
+      "POSITIVE": 6,
+      "NEUTRAL": 16,
+      "NEGATIVE": 28
+    },
+    "four_star_in_sample": 1,
+    "titles_hidden": 21
+  }
+}

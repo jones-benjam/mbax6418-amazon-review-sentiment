@@ -1,0 +1,58 @@
+{
+  "saved_run_accuracy": 0.7333333333333333,
+  "accuracy_min": 0.72,
+  "accuracy_max": 0.74,
+  "n_reviews": 150,
+  "reruns": [
+    {
+      "run": 1,
+      "overall_accuracy": 0.72,
+      "per_class_recall": {
+        "POSITIVE": 0.96,
+        "NEUTRAL": 0.26,
+        "NEGATIVE": 0.94
+      },
+      "sentiment_labels_differing_from_saved_run": 2
+    },
+    {
+      "run": 2,
+      "overall_accuracy": 0.72,
+      "per_class_recall": {
+        "POSITIVE": 0.96,
+        "NEUTRAL": 0.26,
+        "NEGATIVE": 0.94
+      },
+      "sentiment_labels_differing_from_saved_run": 2
+    },
+    {
+      "run": 3,
+      "overall_accuracy": 0.7333333333333333,
+      "per_class_recall": {
+        "POSITIVE": 0.96,
+        "NEUTRAL": 0.3,
+        "NEGATIVE": 0.94
+      },
+      "sentiment_labels_differing_from_saved_run": 2
+    },
+    {
+      "run": 4,
+      "overall_accuracy": 0.74,
+      "per_class_recall": {
+        "POSITIVE": 0.98,
+        "NEUTRAL": 0.3,
+        "NEGATIVE": 0.94
+      },
+      "sentiment_labels_differing_from_saved_run": 1
+    },
+    {
+      "run": 5,
+      "overall_accuracy": 0.72,
+      "per_class_recall": {
+        "POSITIVE": 0.96,
+        "NEUTRAL": 0.28,
+        "NEGATIVE": 0.92
+      },
+      "sentiment_labels_differing_from_saved_run": 4
+    }
+  ]
+}

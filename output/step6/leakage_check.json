@@ -1,0 +1,33 @@
+{
+  "n_reviews": 150,
+  "n_star_titled": 22,
+  "runs_per_condition": 3,
+  "titles_hidden": {
+    "overall_accuracy_runs": [
+      0.72,
+      0.74,
+      0.7266666666666667
+    ],
+    "overall_accuracy_mean": 0.7288888888888888,
+    "star_titled_subset_accuracy_runs": [
+      0.7727272727272727,
+      0.7727272727272727,
+      0.7727272727272727
+    ],
+    "star_titled_subset_accuracy_mean": 0.7727272727272728
+  },
+  "titles_visible": {
+    "overall_accuracy_runs": [
+      0.74,
+      0.7466666666666667,
+      0.7466666666666667
+    ],
+    "overall_accuracy_mean": 0.7444444444444445,
+    "star_titled_subset_accuracy_runs": [
+      0.8636363636363636,
+      0.9090909090909091,
+      0.8636363636363636
+    ],
+    "star_titled_subset_accuracy_mean": 0.8787878787878788
+  }
+}

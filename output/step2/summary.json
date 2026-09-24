@@ -1,31 +1,82 @@
 {
+  "meta": {
+    "mode": "binary",
+    "sample": {
+      "method": "first",
+      "n": 100
+    },
+    "model": "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit",
+    "settings": {
+      "temperature": 0,
+      "seed": 0,
+      "max_tokens": 60,
+      "enable_thinking": false
+    },
+    "dataset": {
+      "total_rows": 152410,
+      "rating_counts": {
+        "1": 12326,
+        "2": 1873,
+        "3": 3271,
+        "4": 6692,
+        "5": 128248
+      },
+      "class_counts": {
+        "POSITIVE": 134940,
+        "NEUTRAL": 3271,
+        "NEGATIVE": 14199
+      }
+    },
+    "mask_star_titles": true,
+    "titles_hidden_from_model": 4
+  },
+  "classes": [
+    "POSITIVE",
+    "NEGATIVE"
+  ],
   "total_reviews": 100,
   "unparsed_responses": 0,
+  "truncated_responses": 0,
   "overall_accuracy": 0.97,
-  "class_distribution_in_batch": {
+  "balanced_accuracy": 0.9178187403993856,
+  "majority_baseline": {
+    "class": "POSITIVE",
+    "accuracy": 0.93
+  },
+  "class_distribution": {
     "POSITIVE": 93,
     "NEGATIVE": 7
   },
-  "per_class_accuracy": {
+  "per_class": {
     "POSITIVE": {
       "support": 93,
       "correct": 91,
-      "accuracy": 0.978494623655914
+      "recall": 0.978494623655914,
+      "ci_low": 0.9249439098234603,
+      "ci_high": 0.9940826242280217,
+      "predicted": 92,
+      "precision": 0.9891304347826086
     },
     "NEGATIVE": {
       "support": 7,
       "correct": 6,
-      "accuracy": 0.8571428571428571
+      "recall": 0.8571428571428571,
+      "ci_low": 0.48686549668097007,
+      "ci_high": 0.9743210440510253,
+      "predicted": 8,
+      "precision": 0.75
     }
   },
   "confusion_matrix": {
     "POSITIVE": {
       "POSITIVE": 91,
-      "NEGATIVE": 2
+      "NEGATIVE": 2,
+      "UNPARSED": 0
     },
     "NEGATIVE": {
       "POSITIVE": 1,
-      "NEGATIVE": 6
+      "NEGATIVE": 6,
+      "UNPARSED": 0
     }
   },
   "misclassified_indices": [
@@ -34,10 +85,11 @@
     98
   ],
   "emotion_agreement": {
-    "reviews_with_both_emotions": 85,
-    "reviews_wordlist_had_no_lexicon_words": 15,
+    "reviews_with_both_emotions": 84,
+    "reviews_wordlist_had_no_lexicon_words": 16,
+    "reviews_llm_had_no_valid_emotion": 0,
     "agree_count": 21,
-    "agreement_rate": 0.24705882352941178,
+    "agreement_rate": 0.25,
     "llm_emotion_distribution": {
       "anger": 7,
       "anticipation": 2,
@@ -47,7 +99,7 @@
     },
     "wordlist_emotion_distribution": {
       "anger": 2,
-      "anticipation": 59,
+      "anticipation": 58,
       "disgust": 1,
       "joy": 21,
       "sadness": 1,

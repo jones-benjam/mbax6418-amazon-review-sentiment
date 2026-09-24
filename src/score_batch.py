@@ -1,49 +1,98 @@
 """
-Step 2: Score a batch of reviews against the star rating.
+Scoring script (Steps 2 and 6): run reviews through the LLM classifier and
+check its answers against the star rating.
 
-Ground truth (binary, this step only): rating >= 4 -> POSITIVE, else NEGATIVE.
-The model only ever receives title/text (via classify_review); the rating is
-used here, after the fact, purely to check the model's answer.
+The rating is the "correct answer" -- but the model never sees it. Ground
+truth is worked out here, after the fact:
 
-Usage:
-    python src/score_batch.py [--n 100] [--data data/Gift_Cards.jsonl] \
-        [--out output/step2] [--workers 8]
+  --mode binary : rating >= 4 -> POSITIVE, else NEGATIVE          (Step 2)
+  --mode three  : 4-5 POSITIVE, 3 NEUTRAL, 1-2 NEGATIVE           (Step 6)
+
+Which reviews are scored:
+  --sample first     : the first N rows of the file, in file order (Step 2)
+  --sample balanced  : PER_CLASS reviews from each of the three rating classes,
+                       drawn from the WHOLE file with a fixed random seed (Step 6)
+
+Reproduce the two runs reported in the README:
+  python src/score_batch.py --mode binary --sample first --n 100 --out output/step2
+  python src/score_batch.py --mode three --sample balanced --per-class 50 --seed 42 --out output/step6
 """
 import argparse
+import collections
 import json
+import math
 import os
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from classify import classify_review
+from classify import CLASSES, MODEL, SETTINGS, classify_review, is_star_title, mask_star_title
 from emotion_wordlist import primary_emotion as wordlist_primary_emotion
 
-
-def true_label_binary(rating: float) -> str:
-    return "POSITIVE" if rating >= 4 else "NEGATIVE"
+UNPARSED = "UNPARSED"
 
 
-def load_rows(path: str, n: int) -> list[dict]:
-    rows = []
+def true_label(rating: float, mode: str) -> str:
+    if rating >= 4:
+        return "POSITIVE"
+    if mode == "three" and rating == 3:
+        return "NEUTRAL"
+    return "NEGATIVE"
+
+
+def load_all_rows(path: str) -> list:
     with open(path, "r") as f:
-        for i, line in enumerate(f):
-            if i >= n:
-                break
-            rows.append(json.loads(line))
-    return rows
+        return [json.loads(line) for line in f]
 
 
-def score_one(index: int, row: dict) -> dict:
-    title, text = row.get("title", ""), row.get("text", "")
-    truth = true_label_binary(row["rating"])
-    result = classify_review(title, text)
-    predicted = result["sentiment"]
-    wordlist = wordlist_primary_emotion(title, text)
+def dataset_stats(rows: list) -> dict:
+    """Whole-file counts, so every report can say how skewed the data is."""
+    ratings = collections.Counter(int(r["rating"]) for r in rows)
+    classes = collections.Counter(true_label(r["rating"], "three") for r in rows)
     return {
-        "index": index,
+        "total_rows": len(rows),
+        "rating_counts": {str(k): ratings.get(k, 0) for k in range(1, 6)},
+        "class_counts": {c: classes.get(c, 0) for c in CLASSES["three"]},
+    }
+
+
+def pick_first(rows: list, n: int) -> list:
+    return list(range(min(n, len(rows))))
+
+
+def pick_balanced(rows: list, per_class: int, seed: int) -> list:
+    """File indices of `per_class` reviews from each class, sampled without
+    replacement from the whole file with a fixed seed, returned in file order."""
+    buckets = {c: [] for c in CLASSES["three"]}
+    for i, row in enumerate(rows):
+        buckets[true_label(row["rating"], "three")].append(i)
+    too_small = {c: len(v) for c, v in buckets.items() if len(v) < per_class}
+    if too_small:
+        raise SystemExit(f"--per-class {per_class} is more than the file has for {too_small}")
+    rng = random.Random(seed)
+    picked = []
+    for c in CLASSES["three"]:  # fixed class order keeps the draw deterministic
+        picked.extend(rng.sample(buckets[c], per_class))
+    return sorted(picked)
+
+
+def score_one(position: int, file_index: int, row: dict, mode: str, mask_titles: bool = True) -> dict:
+    title, text = row.get("title", ""), row.get("text", "")
+    masked = mask_titles and is_star_title(title)
+    # What the model (and the word list) actually get to read: a title that only
+    # states the star count is the rating in disguise, so it is hidden.
+    shown_title = mask_star_title(title) if mask_titles else title
+    truth = true_label(row["rating"], mode)
+    result = classify_review(shown_title, text, mode)
+    predicted = result["sentiment"]
+    wordlist = wordlist_primary_emotion(shown_title, text)
+    return {
+        "index": position,
+        "file_index": file_index,
         "asin": row.get("asin"),
         "rating": row["rating"],
         "title": title,
+        "title_masked": masked,
         "text": text,
         "true_label": truth,
         "predicted_label": predicted,
@@ -57,127 +106,160 @@ def score_one(index: int, row: dict) -> dict:
             and result["emotion"] == wordlist["emotion"]
         ),
         "raw_model_output": result["raw"],
+        "finish_reason": result["finish_reason"],
+        "error": result["error"],
     }
 
 
-def summarize(records: list[dict]) -> dict:
+def wilson_interval(k: int, n: int, z: float = 1.96):
+    """95% Wilson score interval for a proportion k/n."""
+    if n == 0:
+        return None, None
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def summarize(records: list, mode: str, meta: dict) -> dict:
+    meta = {**meta, "titles_hidden_from_model": sum(1 for r in records if r["title_masked"])}
+    classes = CLASSES[mode]
     total = len(records)
-    parsed = [r for r in records if r["predicted_label"] is not None]
-    unparsed = total - len(parsed)
+    unparsed = sum(1 for r in records if r["predicted_label"] is None)
+    truncated = sum(1 for r in records if r["finish_reason"] == "length")
 
-    overall_correct = sum(r["correct"] for r in parsed)
-    overall_accuracy = overall_correct / len(parsed) if parsed else 0.0
+    # Unparsed answers count as wrong -- never silently dropped from the denominator.
+    correct_total = sum(r["correct"] for r in records)
+    confusion = {t: {p: 0 for p in classes + [UNPARSED]} for t in classes}
+    for r in records:
+        confusion[r["true_label"]][r["predicted_label"] or UNPARSED] += 1
 
-    classes = ["POSITIVE", "NEGATIVE"]
     per_class = {}
-    confusion = {t: {p: 0 for p in classes} for t in classes}
-
-    for r in parsed:
-        t, p = r["true_label"], r["predicted_label"]
-        if p in confusion[t]:
-            confusion[t][p] += 1
-
     for c in classes:
-        class_rows = [r for r in parsed if r["true_label"] == c]
-        n_class = len(class_rows)
-        n_correct = sum(r["correct"] for r in class_rows)
+        support = sum(confusion[c].values())
+        correct = confusion[c][c]
+        predicted = sum(confusion[t][c] for t in classes)
+        lo, hi = wilson_interval(correct, support)
         per_class[c] = {
-            "support": n_class,
-            "correct": n_correct,
-            "accuracy": (n_correct / n_class) if n_class else None,
+            "support": support,
+            "correct": correct,
+            "recall": correct / support if support else None,
+            "ci_low": lo,
+            "ci_high": hi,
+            "predicted": predicted,
+            "precision": correct / predicted if predicted else None,
         }
 
-    misclassified = [r["index"] for r in parsed if not r["correct"]]
+    recalls = [v["recall"] for v in per_class.values() if v["recall"] is not None]
+    supports = {c: per_class[c]["support"] for c in classes}
+    majority = max(supports, key=supports.get)
 
-    # Step 5: how often do the LLM's and the word-list's emotion picks agree?
-    both_present = [r for r in records if r["llm_emotion"] and r["wordlist_emotion"]]
-    wordlist_no_signal = sum(1 for r in records if r["wordlist_emotion"] is None)
+    both = [r for r in records if r["llm_emotion"] and r["wordlist_emotion"]]
+    agree = sum(1 for r in both if r["emotions_agree"])
     emotion_agreement = {
-        "reviews_with_both_emotions": len(both_present),
-        "reviews_wordlist_had_no_lexicon_words": wordlist_no_signal,
-        "agree_count": sum(1 for r in both_present if r["emotions_agree"]),
-        "agreement_rate": (
-            sum(1 for r in both_present if r["emotions_agree"]) / len(both_present)
-            if both_present else None
-        ),
-        "llm_emotion_distribution": {
-            e: sum(1 for r in records if r["llm_emotion"] == e) for e in
-            sorted({r["llm_emotion"] for r in records if r["llm_emotion"]})
-        },
-        "wordlist_emotion_distribution": {
-            e: sum(1 for r in records if r["wordlist_emotion"] == e) for e in
-            sorted({r["wordlist_emotion"] for r in records if r["wordlist_emotion"]})
-        },
+        "reviews_with_both_emotions": len(both),
+        "reviews_wordlist_had_no_lexicon_words": sum(1 for r in records if r["wordlist_emotion"] is None),
+        "reviews_llm_had_no_valid_emotion": sum(1 for r in records if r["llm_emotion"] is None),
+        "agree_count": agree,
+        "agreement_rate": agree / len(both) if both else None,
+        "llm_emotion_distribution": dict(sorted(collections.Counter(
+            r["llm_emotion"] for r in records if r["llm_emotion"]).items())),
+        "wordlist_emotion_distribution": dict(sorted(collections.Counter(
+            r["wordlist_emotion"] for r in records if r["wordlist_emotion"]).items())),
     }
 
     return {
+        "meta": meta,
+        "classes": classes,
         "total_reviews": total,
         "unparsed_responses": unparsed,
-        "overall_accuracy": overall_accuracy,
-        "class_distribution_in_batch": {
-            c: sum(1 for r in parsed if r["true_label"] == c) for c in classes
-        },
-        "per_class_accuracy": per_class,
+        "truncated_responses": truncated,
+        "overall_accuracy": correct_total / total if total else 0.0,
+        "balanced_accuracy": sum(recalls) / len(recalls) if recalls else None,
+        "majority_baseline": {"class": majority, "accuracy": supports[majority] / total if total else 0.0},
+        "class_distribution": supports,
+        "per_class": per_class,
         "confusion_matrix": confusion,
-        "misclassified_indices": misclassified,
+        "misclassified_indices": [r["index"] for r in records if not r["correct"]],
         "emotion_agreement": emotion_agreement,
     }
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--n", type=int, default=100)
-    parser.add_argument("--data", default="data/Gift_Cards.jsonl")
-    parser.add_argument("--out", default="output/step2")
-    parser.add_argument("--workers", type=int, default=8)
-    args = parser.parse_args()
-
-    rows = load_rows(args.data, args.n)
-    print(f"Loaded {len(rows)} rows from {args.data} (file order, first {args.n})")
-
-    records = [None] * len(rows)
-    start = time.time()
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(score_one, i, row): i for i, row in enumerate(rows)}
-        done = 0
-        for future in as_completed(futures):
-            i = futures[future]
-            records[i] = future.result()
-            done += 1
-            if done % 10 == 0 or done == len(rows):
-                print(f"  scored {done}/{len(rows)}")
-    elapsed = time.time() - start
-    print(f"Done in {elapsed:.1f}s")
-
-    summary = summarize(records)
-
-    out_dir = args.out
-    os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "records.json"), "w") as f:
-        json.dump(records, f, indent=2)
-    with open(os.path.join(out_dir, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
-
-    print("\n=== Step 2 Summary (100-row, file-order batch, binary POS/NEG) ===")
-    print(f"Class distribution in this batch (from rating): {summary['class_distribution_in_batch']}")
-    print(f"Overall accuracy: {summary['overall_accuracy']:.1%}  ({summary['total_reviews'] - summary['unparsed_responses']} scored, {summary['unparsed_responses']} unparsed)")
-    for c, stats in summary["per_class_accuracy"].items():
-        acc = f"{stats['accuracy']:.1%}" if stats["accuracy"] is not None else "n/a"
-        print(f"  {c:<9} support={stats['support']:<4} accuracy={acc}")
-    print("Confusion matrix (rows=true rating-derived label, cols=model prediction):")
+def print_report(summary: dict, out_dir: str) -> None:
+    m = summary["meta"]
+    print(f"\n=== {m['mode']}-class run, {m['sample']['method']} sample of {summary['total_reviews']} ===")
+    print(f"Class counts in this sample (from rating): {summary['class_distribution']}")
+    print(f"Whole-file class counts:                   {m['dataset']['class_counts']}")
+    print(f"Overall accuracy:  {summary['overall_accuracy']:.1%}   "
+          f"balanced accuracy: {summary['balanced_accuracy']:.1%}   "
+          f"always-'{summary['majority_baseline']['class']}' baseline: {summary['majority_baseline']['accuracy']:.1%}")
+    print(f"Unparsed: {summary['unparsed_responses']}   Truncated: {summary['truncated_responses']}   "
+          f"Star-count titles hidden from model: {m['titles_hidden_from_model']}")
+    for c, s in summary["per_class"].items():
+        rec = f"{s['recall']:.1%}" if s["recall"] is not None else "n/a"
+        prec = f"{s['precision']:.1%}" if s["precision"] is not None else "n/a"
+        ci = f"[{s['ci_low']:.0%}-{s['ci_high']:.0%}]" if s["ci_low"] is not None else ""
+        print(f"  {c:<9} support={s['support']:<4} recall={rec:<6} 95%CI{ci:<10} precision={prec}")
+    print("Confusion matrix (rows = rating-derived truth, cols = model answer):")
     for t, row in summary["confusion_matrix"].items():
         print(f"  {t:<9} {row}")
-
     ea = summary["emotion_agreement"]
-    print("\n--- Step 5: LLM vs. word-list primary emotion ---")
-    print(f"Word list found no lexicon words at all in {ea['reviews_wordlist_had_no_lexicon_words']}/{summary['total_reviews']} reviews")
-    if ea["agreement_rate"] is not None:
-        print(f"Agreement where both have an answer: {ea['agree_count']}/{ea['reviews_with_both_emotions']} ({ea['agreement_rate']:.1%})")
-    print(f"LLM emotion distribution:       {ea['llm_emotion_distribution']}")
-    print(f"Word-list emotion distribution: {ea['wordlist_emotion_distribution']}")
+    print("Emotion (LLM vs NRC word list): "
+          f"agree {ea['agree_count']}/{ea['reviews_with_both_emotions']}"
+          + (f" ({ea['agreement_rate']:.1%})" if ea["agreement_rate"] is not None else "")
+          + f"; word list had no lexicon hits in {ea['reviews_wordlist_had_no_lexicon_words']}"
+          + f"; LLM gave no valid emotion in {ea['reviews_llm_had_no_valid_emotion']}")
+    print(f"Saved {out_dir}/records.json and {out_dir}/summary.json")
 
-    print(f"\nSaved per-review results to {out_dir}/records.json")
-    print(f"Saved summary to {out_dir}/summary.json")
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--mode", choices=list(CLASSES), default="three")
+    parser.add_argument("--sample", choices=["first", "balanced"], default="balanced")
+    parser.add_argument("--n", type=int, default=100, help="rows to read for --sample first")
+    parser.add_argument("--per-class", type=int, default=50, help="rows per class for --sample balanced")
+    parser.add_argument("--seed", type=int, default=42, help="random seed for --sample balanced")
+    parser.add_argument("--data", default="data/Gift_Cards.jsonl")
+    parser.add_argument("--out", default="output/step6")
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--keep-star-titles", action="store_true",
+                        help="do NOT hide star-count titles like 'Three Stars' (leaky baseline, for the ablation only)")
+    args = parser.parse_args()
+
+    if args.sample == "balanced" and args.mode != "three":
+        parser.error("--sample balanced needs --mode three (it samples across all three rating classes)")
+
+    rows = load_all_rows(args.data)
+    stats = dataset_stats(rows)
+    if args.sample == "first":
+        indices = pick_first(rows, args.n)
+        sample_meta = {"method": "first", "n": len(indices)}
+    else:
+        indices = pick_balanced(rows, args.per_class, args.seed)
+        sample_meta = {"method": "balanced", "per_class": args.per_class, "seed": args.seed, "n": len(indices)}
+    print(f"Loaded {len(rows):,} rows; scoring {len(indices)} ({sample_meta['method']} sample, mode={args.mode})")
+
+    records = [None] * len(indices)
+    start = time.time()
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {pool.submit(score_one, pos, fi, rows[fi], args.mode, not args.keep_star_titles): pos for pos, fi in enumerate(indices)}
+        for done, future in enumerate(as_completed(futures), 1):
+            records[futures[future]] = future.result()
+            if done % 25 == 0 or done == len(indices):
+                print(f"  scored {done}/{len(indices)}")
+    print(f"Done in {time.time() - start:.1f}s")
+
+    meta = {"mode": args.mode, "sample": sample_meta, "model": MODEL, "settings": SETTINGS, "dataset": stats,
+            "mask_star_titles": not args.keep_star_titles}
+    summary = summarize(records, args.mode, meta)
+
+    os.makedirs(args.out, exist_ok=True)
+    with open(os.path.join(args.out, "records.json"), "w") as f:
+        json.dump(records, f, indent=2)
+    with open(os.path.join(args.out, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+    print_report(summary, args.out)
 
 
 if __name__ == "__main__":
