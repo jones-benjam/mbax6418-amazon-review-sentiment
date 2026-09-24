@@ -8,7 +8,8 @@ Everything on the page is computed from the saved records.json / summary.json;
 nothing is scored live.
 
 Run:
-    ./venv/bin/python src/dashboard.py [--balanced output/step6] [--lopsided output/step2] [--port 7860]
+    ./venv/bin/python src/dashboard.py [--balanced output/step6] [--lopsided output/step2]
+        [--start-tab balanced|lopsided] [--port 7860]
 """
 import argparse
 import html
@@ -34,6 +35,8 @@ SEQ_STEPS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#256abf", "
 CLASS_COLOR = {"POSITIVE": BLUE, "NEUTRAL": GRAY, "NEGATIVE": RED}
 CLASS_TEXT = {"POSITIVE": BLUE, "NEUTRAL": TEXT_SECONDARY, "NEGATIVE": RED}
 UNPARSED = "UNPARSED"
+NAVY = "#0d366b"      # single-hue ink for the two-treatment bar charts (outline = reference, solid = model/sample)
+TRACK = "#efeee9"
 
 CUSTOM_CSS = f"""
 .gradio-container {{
@@ -61,7 +64,9 @@ CUSTOM_CSS = f"""
     --table-row-focus: {PAGE} !important;
     --link-text-color: {BLUE} !important;
 }}
-.gradio-container, .gradio-container .prose, .gradio-container .prose * {{ color: {TEXT_PRIMARY} !important; }}
+/* Force dark text on Gradio's own Markdown blocks only. A blanket .prose rule also flattened every inline
+   color inside our gr.HTML blocks (dark matrix cells became black-on-navy, status colors turned black). */
+.gradio-container, .gradio-container .md, .gradio-container .md * {{ color: {TEXT_PRIMARY} !important; }}
 .gradio-container table, .gradio-container tr, .gradio-container th, .gradio-container td {{
     border: 0 !important; border-color: {GRIDLINE} !important;
 }}
@@ -149,7 +154,7 @@ def render_class_tiles(summary: dict) -> str:
         ci = f'95% CI {pct(s["ci_low"], 0)}&ndash;{pct(s["ci_high"], 0)}' if s["ci_low"] is not None else ""
         sub = f'{s["correct"]} of {s["support"]} {esc(c)} reviews correct &middot; {ci}'
         tiles.append(
-            f'<div class="stat-tile" style="border-top:3px solid {CLASS_COLOR.get(c, GRAY)};">'
+            f'<div class="stat-tile" data-tile="recall" data-label="{esc(c)}" data-value="{(s["recall"] or 0):.6f}" style="border-top:3px solid {CLASS_COLOR.get(c, GRAY)};">'
             f'<div class="label">{esc(c)} recall (how often a true {esc(c)} review is answered right)</div>'
             f'<div class="value">{pct(s["recall"])}</div><div class="sub">{sub}</div></div>')
     return f'<div class="tile-grid">{"".join(tiles)}</div>'
@@ -208,9 +213,9 @@ def render_confusion(summary: dict) -> str:
             shade = SEQ_STEPS[min(len(SEQ_STEPS) - 1, int(frac * len(SEQ_STEPS)))]
             fg = "#fff" if frac > 0.55 else TEXT_PRIMARY
             tip = f"{v} of {total} true {t} reviews were answered {p} ({frac:.0%})"
-            cells += (f'<td title="{esc(tip)}" style="padding:12px 18px;text-align:center;border-radius:6px;'
-                      f'background:{shade};color:{fg};"><div style="font-size:18px;font-weight:700;">{v}</div>'
-                      f'<div style="font-size:11px;opacity:.85;">{frac:.0%}</div></td>')
+            cells += (f'<td data-cell="{esc(t)}>{esc(p)}" data-n="{v}" title="{esc(tip)}" style="padding:12px 18px;text-align:center;border-radius:6px;'
+                      f'background:{shade};color:{fg};"><div style="font-size:18px;font-weight:700;color:{fg};">{v}</div>'
+                      f'<div style="font-size:11px;opacity:.85;color:{fg};">{frac:.0%}</div></td>')
         rows += (f'<tr><td style="padding:12px 14px;text-align:right;font-weight:600;color:{TEXT_SECONDARY};">'
                  f'{esc(t)}</td>{cells}</tr>')
     note = (f'<div style="font-size:12px;color:{TEXT_MUTED};margin-top:10px;max-width:520px;line-height:1.6;">'
@@ -243,6 +248,132 @@ def render_emotion_summary(summary: dict) -> str:
     return (f'<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">'
             f'<div class="tile-grid" style="flex:2;min-width:300px;">{tiles}</div>'
             f'<div style="flex:1;min-width:260px;">{table}</div></div>')
+
+
+
+# ------------------------------------------------------------------- charts --
+# Hand-built HTML bars. Values are printed in their own column beside each bar
+# (never overlaid on it) and every non-zero bar has a minimum width, so small
+# values cannot collapse to nothing. Each mark carries data-* attributes with its
+# exact value so the page can be checked against the saved JSON in the browser.
+MIN_BAR_PX = 6
+
+
+def swatch(kind: str) -> str:
+    if kind == "ref":
+        return f'<span style="display:inline-block;width:22px;height:10px;border:2px solid {NAVY};border-radius:0 3px 3px 0;box-sizing:border-box;"></span>'
+    return f'<span style="display:inline-block;width:22px;height:10px;background:{NAVY};border-radius:0 3px 3px 0;"></span>'
+
+
+def legend(items: list) -> str:
+    inner = "".join(f'<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;">{swatch(k)}{esc(t)}</span>'
+                    for k, t in items)
+    return f'<div style="font-size:12px;color:{TEXT_SECONDARY};margin:2px 0 10px;">{inner}</div>'
+
+
+def chart_card(title: str, blurb: str, body: str) -> str:
+    return card(f'<div style="font-weight:700;font-size:14px;margin-bottom:4px;">{esc(title)}</div>'
+                f'<div style="font-size:12px;color:{TEXT_SECONDARY};line-height:1.5;margin-bottom:10px;">{blurb}</div>{body}')
+
+
+def solid_or_outline(kind: str, frac: float, attrs: str) -> str:
+    """One bar. A zero value draws nothing (an outlined bar would otherwise show its 4px border)."""
+    if frac <= 0:
+        return f'<div {attrs} style="height:0;"></div>'
+    w = f"width:{frac * 100:.2f}%;min-width:{MIN_BAR_PX}px;height:12px;"
+    if kind == "ref":
+        return f'<div {attrs} style="{w}border:2px solid {NAVY};border-radius:0 3px 3px 0;box-sizing:border-box;"></div>'
+    return f'<div {attrs} style="{w}background:{NAVY};border-radius:0 3px 3px 0;"></div>'
+
+
+def grouped_bars(chart_id: str, rows: list, scale_max: float, ref_name: str, val_name: str) -> str:
+    """rows: dicts with label, ref, ref_text, val, val_text, note. Outlined bar = reference, solid = the run."""
+    out = legend([("ref", ref_name), ("val", val_name)])
+    for r in rows:
+        line = ""
+        for kind, v, text, name in [("ref", r["ref"], r["ref_text"], ref_name), ("val", r["val"], r["val_text"], val_name)]:
+            attrs = (f'data-chart="{chart_id}" data-series="{kind}" data-label="{esc(r["key"])}" '
+                     f'data-value="{v}" title="{esc(r["key"])} \u2014 {esc(name)}: {esc(text)}"')
+            line += (f'<div style="display:grid;grid-template-columns:1fr 128px;gap:10px;align-items:center;margin:3px 0;">'
+                     f'<div>{solid_or_outline(kind, (v / scale_max) if scale_max else 0, attrs)}</div>'
+                     f'<div style="font-size:12px;color:{TEXT_SECONDARY};white-space:nowrap;">{text}</div></div>')
+        note = f'<div style="font-size:11px;color:{TEXT_MUTED};margin:0 0 2px;">{r["note"]}</div>' if r.get("note") else ""
+        out += f'<div style="margin:12px 0 14px;"><div style="font-size:13px;font-weight:600;">{r["label"]}</div>{line}{note}</div>'
+    return out
+
+
+def render_recall_chart(summary: dict) -> str:
+    k = len(summary["classes"])
+    rows = ""
+    for c, s in summary["per_class"].items():
+        rec = s["recall"] or 0.0
+        color = CLASS_COLOR.get(c, GRAY)
+        title = f'{c}: {s["correct"]} of {s["support"]} answered right ({pct(rec)})'
+        bar = (f'<div data-chart="recall" data-label="{esc(c)}" data-value="{rec:.6f}" title="{esc(title)}" '
+               f'style="height:18px;width:{rec * 100:.2f}%;min-width:{MIN_BAR_PX if rec > 0 else 0}px;'
+               f'background:{color};border-radius:0 4px 4px 0;"></div>')
+        whisker = ""
+        if s["ci_low"] is not None:
+            lo, hi = s["ci_low"] * 100, s["ci_high"] * 100
+            whisker = (f'<div title="95% confidence interval {pct(s["ci_low"], 0)}\u2013{pct(s["ci_high"], 0)}" '
+                       f'style="position:absolute;left:{lo:.2f}%;width:max({hi - lo:.2f}%,2px);top:50%;height:2px;margin-top:-1px;background:{TEXT_PRIMARY};"></div>'
+                       f'<div style="position:absolute;left:{lo:.2f}%;top:3px;bottom:3px;width:2px;background:{TEXT_PRIMARY};"></div>'
+                       f'<div style="position:absolute;left:calc({hi:.2f}% - 2px);top:3px;bottom:3px;width:2px;background:{TEXT_PRIMARY};"></div>')
+        chance = (f'<div style="position:absolute;left:{100 / k:.2f}%;top:-4px;bottom:-4px;border-left:1px dashed {TEXT_MUTED};"></div>')
+        rows += (f'<div style="display:grid;grid-template-columns:86px 1fr 96px;gap:10px;align-items:center;margin:10px 0;">'
+                 f'<div style="font-size:13px;font-weight:600;color:{CLASS_TEXT.get(c, TEXT_SECONDARY)};">{esc(c)}</div>'
+                 f'<div style="position:relative;height:18px;background:{TRACK};border-radius:4px;">{bar}{chance}{whisker}</div>'
+                 f'<div style="font-size:13px;white-space:nowrap;"><strong>{pct(rec, 0)}</strong> '
+                 f'<span style="color:{TEXT_MUTED};font-size:12px;">{s["correct"]}/{s["support"]}</span></div></div>')
+    key = (f'<div style="font-size:11px;color:{TEXT_MUTED};margin-top:6px;">Whisker = 95% confidence interval. '
+           f'Dashed line = {100 / k:.0f}%, what random guessing among {k} classes would get.</div>')
+    return chart_card("How often each class was answered right",
+                      "Of the reviews that truly belong to each class, the share the model got right. Short bars are where it fails.",
+                      rows + key)
+
+
+def render_key_vs_model_chart(summary: dict) -> str:
+    cm, classes = summary["confusion_matrix"], summary["classes"]
+    n = summary["total_reviews"]
+    key_n = {c: sum(cm[c].values()) for c in classes}
+    said_n = {c: sum(cm[t][c] for t in classes) for c in classes}
+    scale = max(list(key_n.values()) + list(said_n.values())) or 1
+    rows = []
+    for c in classes:
+        diff = said_n[c] - key_n[c]
+        note = (f"model over-used this label by {diff}" if diff > 0 else
+                f"model under-used this label by {-diff}" if diff < 0 else "model used it exactly as often as the key")
+        rows.append({"key": c, "label": f'<span style="color:{CLASS_TEXT.get(c, TEXT_SECONDARY)};">{esc(c)}</span>',
+                     "ref": key_n[c], "ref_text": f'{key_n[c]} <span style="color:{TEXT_MUTED};">({key_n[c] / n:.0%})</span>',
+                     "val": said_n[c], "val_text": f'{said_n[c]} <span style="color:{TEXT_MUTED};">({said_n[c] / n:.0%})</span>',
+                     "note": note})
+    return chart_card("Answer key vs. what the model said",
+                      "How many reviews truly belong to each class (from the stars) next to how many the model put there. "
+                      "A solid bar longer than its outline means the model over-uses that label.",
+                      grouped_bars("keyvsmodel", rows, scale, "Answer key (from stars)", "Model said"))
+
+
+def render_star_chart(run: dict) -> str:
+    summary, records = run["summary"], run["records"]
+    ds = summary["meta"]["dataset"]
+    file_total = ds["total_rows"]
+    n = len(records)
+    rows = []
+    for star in range(1, 6):
+        fc = ds["rating_counts"][str(star)]
+        sc = sum(1 for r in records if int(r["rating"]) == star)
+        rows.append({"key": f"{star} star{'s' if star > 1 else ''}", "label": "\u2605" * star + "\u2606" * (5 - star),
+                     "ref": fc / file_total, "ref_text": f'{fc / file_total:.1%} <span style="color:{TEXT_MUTED};">({fc:,})</span>',
+                     "val": sc / n, "val_text": f'{sc / n:.1%} <span style="color:{TEXT_MUTED};">({sc})</span>'})
+    return chart_card("Star-rating distribution",
+                      f"Share of reviews at each star rating: the whole file ({file_total:,} reviews) next to this run's sample. "
+                      "The real data is overwhelmingly 5-star; sampling changes that on purpose.",
+                      grouped_bars("stars", rows, 1.0, "Whole file", "This run's sample"))
+
+
+def render_charts(run: dict) -> str:
+    cards = "".join([render_recall_chart(run["summary"]), render_key_vs_model_chart(run["summary"]), render_star_chart(run)])
+    return f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;align-items:start;">{cards}</div>'
 
 
 # -------------------------------------------------------------- review table --
@@ -327,6 +458,8 @@ def build_run_view(run: dict) -> None:
     gr.HTML(render_headline_tiles(summary))
     gr.HTML(render_class_tiles(summary))
     gr.HTML(render_callout(run))
+    gr.Markdown("### The data and the model's results at a glance")
+    gr.HTML(render_charts(run))
     gr.Markdown("### Which answers were right, and which class got mistaken for which")
     gr.HTML(render_confusion(summary))
     gr.Markdown("### Primary emotion: LLM vs. NRC word list")
@@ -345,7 +478,7 @@ def build_run_view(run: dict) -> None:
     dropdown.change(on_change, inputs=dropdown, outputs=[table, count])
 
 
-def build_app(balanced_dir: str, lopsided_dir: str) -> gr.Blocks:
+def build_app(balanced_dir: str, lopsided_dir: str, start_tab: str = "balanced") -> gr.Blocks:
     balanced, lopsided = load_run(balanced_dir), load_run(lopsided_dir)
     with gr.Blocks(title="Gift Card Review Sentiment Dashboard") as demo:
         gr.Markdown("# Gift Card Review Sentiment Dashboard")
@@ -353,10 +486,10 @@ def build_app(balanced_dir: str, lopsided_dir: str) -> gr.Blocks:
             "How well does an LLM read the sentiment and emotion of Amazon gift-card reviews, judged against "
             "the reviewers' own star ratings? Two runs are shown: a balanced three-class run (the fair test) "
             "and the original lopsided first-100 run (which flatters the model).")
-        with gr.Tabs():
-            with gr.Tab("Balanced 3-class run (Step 6)"):
+        with gr.Tabs(selected=start_tab):
+            with gr.Tab("Balanced 3-class run (Step 6)", id="balanced"):
                 build_run_view(balanced)
-            with gr.Tab("Lopsided first-100 run (Step 2)"):
+            with gr.Tab("Lopsided first-100 run (Step 2)", id="lopsided"):
                 build_run_view(lopsided)
         gr.Markdown(
             "---\nData: Amazon Reviews '23, “Gift Cards” category (McAuley Lab, UC San Diego) — "
@@ -369,10 +502,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--balanced", default="output/step6")
     parser.add_argument("--lopsided", default="output/step2")
+    parser.add_argument("--start-tab", choices=["balanced", "lopsided"], default="balanced")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true")
     args = parser.parse_args()
-    build_app(args.balanced, args.lopsided).launch(server_port=args.port, share=args.share, css=CUSTOM_CSS)
+    build_app(args.balanced, args.lopsided, args.start_tab).launch(server_port=args.port, share=args.share, css=CUSTOM_CSS)
 
 
 if __name__ == "__main__":
