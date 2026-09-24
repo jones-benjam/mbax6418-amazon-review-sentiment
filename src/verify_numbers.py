@@ -14,6 +14,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import sys
 
 
@@ -66,6 +67,12 @@ def check_run(run_dir: str, failures: list) -> dict:
         expect(f"model_said[{c}]", predicted, s["per_class"][c]["predicted"])
     expect("balanced_accuracy", sum(recalls) / len(recalls), s["balanced_accuracy"])
 
+    cc = s["meta"]["dataset"]["class_counts"]
+    share = ({"POSITIVE": cc["POSITIVE"], "NEGATIVE": cc["NEUTRAL"] + cc["NEGATIVE"]} if "NEUTRAL" not in classes
+             else {c: cc[c] for c in classes})
+    weighted = sum(rc * share[c] / sum(share.values()) for c, rc in zip(classes, recalls))
+    expect("file_mix_weighted_accuracy", weighted, s["file_mix_weighted_accuracy"]["value"])
+
     both = [r for r in recs if r["llm_emotion"] and r["wordlist_emotion"]]
     agree = sum(1 for r in both if r["llm_emotion"] == r["wordlist_emotion"])
     ea = s["emotion_agreement"]
@@ -105,6 +112,22 @@ def main():
             print(f"  {'PASS' if ok else 'FAIL'}  {star} star: recounted {counts[star]:,} vs saved {want:,}")
             if not ok:
                 failures.append(f"file rating count {star}")
+        pat = re.compile(r"^\s*(one|two|three|four|five|[1-5])[\s-]*stars?[.!]*\s*$", re.IGNORECASE)
+        words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+        total = matches = 0
+        with open(args.data) as f:
+            for line in f:
+                r = json.loads(line)
+                m = pat.match(r.get("title") or "")
+                if m:
+                    total += 1
+                    matches += (words.get(m.group(1).lower()) or int(m.group(1))) == int(r["rating"])
+        want = dataset["star_count_titles"]
+        for name, got, exp in [("star-count titles", total, want["total"]), ("...that state the true rating", matches, want["title_number_matches_rating"])]:
+            ok = got == exp
+            print(f"  {'PASS' if ok else 'FAIL'}  {name}: recounted {got:,} vs saved {exp:,}")
+            if not ok:
+                failures.append(name)
     else:
         print(f"(skipping whole-file recount: {args.data} not found)")
 

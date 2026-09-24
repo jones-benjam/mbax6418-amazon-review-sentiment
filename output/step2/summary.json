@@ -14,6 +14,10 @@
     },
     "dataset": {
       "total_rows": 152410,
+      "star_count_titles": {
+        "total": 31967,
+        "title_number_matches_rating": 31935
+      },
       "rating_counts": {
         "1": 12326,
         "2": 1873,
@@ -42,6 +46,13 @@
   "majority_baseline": {
     "class": "POSITIVE",
     "accuracy": 0.93
+  },
+  "file_mix_weighted_accuracy": {
+    "value": 0.9645846744335329,
+    "weights": {
+      "POSITIVE": 0.8853749753953153,
+      "NEGATIVE": 0.11462502460468474
+    }
   },
   "class_distribution": {
     "POSITIVE": 93,

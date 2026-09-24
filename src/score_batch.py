@@ -26,7 +26,7 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from classify import CLASSES, MODEL, SETTINGS, classify_review, is_star_title, mask_star_title
+from classify import CLASSES, MODEL, SETTINGS, classify_review, is_star_title, mask_star_title, star_title_number
 from emotion_wordlist import primary_emotion as wordlist_primary_emotion
 
 UNPARSED = "UNPARSED"
@@ -49,8 +49,13 @@ def dataset_stats(rows: list) -> dict:
     """Whole-file counts, so every report can say how skewed the data is."""
     ratings = collections.Counter(int(r["rating"]) for r in rows)
     classes = collections.Counter(true_label(r["rating"], "three") for r in rows)
+    star_titled = [(star_title_number(r.get("title")), int(r["rating"])) for r in rows if is_star_title(r.get("title"))]
     return {
         "total_rows": len(rows),
+        "star_count_titles": {
+            "total": len(star_titled),
+            "title_number_matches_rating": sum(1 for stated, actual in star_titled if stated == actual),
+        },
         "rating_counts": {str(k): ratings.get(k, 0) for k in range(1, 6)},
         "class_counts": {c: classes.get(c, 0) for c in CLASSES["three"]},
     }
@@ -151,6 +156,15 @@ def summarize(records: list, mode: str, meta: dict) -> dict:
             "precision": correct / predicted if predicted else None,
         }
 
+    # Per-class recalls weighted by how common each class is in the WHOLE file: what
+    # overall accuracy would look like on the real review mix rather than a balanced one.
+    cc = meta["dataset"]["class_counts"]
+    file_counts = ({"POSITIVE": cc["POSITIVE"], "NEGATIVE": cc["NEUTRAL"] + cc["NEGATIVE"]}
+                   if mode == "binary" else {c: cc[c] for c in classes})
+    file_total = sum(file_counts.values())
+    weights = {c: file_counts[c] / file_total for c in classes}
+    file_mix_accuracy = sum(per_class[c]["recall"] * weights[c] for c in classes if per_class[c]["recall"] is not None)
+
     recalls = [v["recall"] for v in per_class.values() if v["recall"] is not None]
     supports = {c: per_class[c]["support"] for c in classes}
     majority = max(supports, key=supports.get)
@@ -178,6 +192,7 @@ def summarize(records: list, mode: str, meta: dict) -> dict:
         "overall_accuracy": correct_total / total if total else 0.0,
         "balanced_accuracy": sum(recalls) / len(recalls) if recalls else None,
         "majority_baseline": {"class": majority, "accuracy": supports[majority] / total if total else 0.0},
+        "file_mix_weighted_accuracy": {"value": file_mix_accuracy, "weights": weights},
         "class_distribution": supports,
         "per_class": per_class,
         "confusion_matrix": confusion,
@@ -194,6 +209,7 @@ def print_report(summary: dict, out_dir: str) -> None:
     print(f"Overall accuracy:  {summary['overall_accuracy']:.1%}   "
           f"balanced accuracy: {summary['balanced_accuracy']:.1%}   "
           f"always-'{summary['majority_baseline']['class']}' baseline: {summary['majority_baseline']['accuracy']:.1%}")
+    print(f"Accuracy if weighted to the whole file's real class mix: {summary['file_mix_weighted_accuracy']['value']:.1%}")
     print(f"Unparsed: {summary['unparsed_responses']}   Truncated: {summary['truncated_responses']}   "
           f"Star-count titles hidden from model: {m['titles_hidden_from_model']}")
     for c, s in summary["per_class"].items():
@@ -223,9 +239,24 @@ def main():
     parser.add_argument("--data", default="data/Gift_Cards.jsonl")
     parser.add_argument("--out", default="output/step6")
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--resummarize", metavar="RUN_DIR",
+                        help="rebuild RUN_DIR/summary.json from its saved records.json (no model calls) and exit")
     parser.add_argument("--keep-star-titles", action="store_true",
                         help="do NOT hide star-count titles like 'Three Stars' (leaky baseline, for the ablation only)")
     args = parser.parse_args()
+
+    if args.resummarize:
+        with open(os.path.join(args.resummarize, "records.json")) as f:
+            saved = json.load(f)
+        with open(os.path.join(args.resummarize, "summary.json")) as f:
+            old_meta = json.load(f)["meta"]
+        if os.path.exists(args.data):
+            old_meta["dataset"] = dataset_stats(load_all_rows(args.data))
+        summary = summarize(saved, old_meta["mode"], old_meta)
+        with open(os.path.join(args.resummarize, "summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+        print_report(summary, args.resummarize)
+        return
 
     if args.sample == "balanced" and args.mode != "three":
         parser.error("--sample balanced needs --mode three (it samples across all three rating classes)")

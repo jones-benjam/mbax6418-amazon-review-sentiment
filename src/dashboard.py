@@ -144,6 +144,8 @@ def render_headline_tiles(summary: dict) -> str:
         tile("Overall accuracy", pct(summary["overall_accuracy"]), "share of reviews where the model matched the rating-derived label"),
         tile("Balanced accuracy", pct(summary["balanced_accuracy"]), "average of the per-class recalls, so every class counts equally"),
         tile("Always-guess-" + base["class"], pct(base["accuracy"]), "what a model that ignores the review entirely would score"),
+        tile("On the real review mix", pct(summary["file_mix_weighted_accuracy"]["value"]),
+             "per-class recalls weighted by how common each class is in the whole file"),
     ]
     return f'<div class="tile-grid">{"".join(tiles)}</div>'
 

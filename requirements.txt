@@ -1,4 +1,4 @@
-openai>=1.0.0
-python-dotenv>=1.0.0
-gradio>=4.0.0
-nrclex>=4.0
+openai==3.17.0
+python-dotenv==1.2.3
+gradio==6.28.0
+nrclex==4.1.0

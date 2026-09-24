@@ -55,13 +55,26 @@ def is_star_title(title: str) -> bool:
     return bool(_STAR_TITLE.match(title or ""))
 
 
+_WORD_TO_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+
+
+def star_title_number(title: str):
+    """The star count a star-count title states (e.g. 'Three Stars' -> 3), else None."""
+    m = _STAR_TITLE.match(title or "")
+    if not m:
+        return None
+    word = m.group(1).lower()
+    return _WORD_TO_NUM.get(word) or int(word)
+
+
 def mask_star_title(title: str) -> str:
     """Blank out a title that only states the star count; leave real titles alone."""
     return "" if is_star_title(title) else (title or "")
 
-# Fixed request settings -- recorded in every run's summary.json so a result
-# can be reproduced. temperature=0 plus a pinned seed keeps the endpoint's
-# output stable from run to run.
+# Fixed request settings, recorded in every run's summary.json. NOTE: these do NOT
+# make the shared endpoint bit-deterministic -- a few borderline reviews flip
+# between identical runs (measured in output/step6/repeatability.json), so the
+# saved records.json, not a re-run, is the source of record for reported numbers.
 SETTINGS = {
     "temperature": 0,
     "seed": 0,
