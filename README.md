@@ -32,8 +32,10 @@ Emotion word list: the NRC Word-Emotion Association Lexicon (Mohammad & Turney),
 
 ## Reproduce
 
+Needs **Python 3.10 or newer** (developed and tested on 3.12.2; on older interpreters pip cannot see the pinned package versions). Verified from a fresh clone of this repo in a clean virtual environment: install, `verify_numbers.py`, and the dashboard all run.
+
 ```bash
-python -m venv venv && ./venv/bin/pip install -r requirements.txt
+python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt
 cp .env.example .env          # add an OpenAI-compatible endpoint + key (not needed just to view results)
 mkdir -p data && curl -L -o data/Gift_Cards.jsonl.gz https://mcauleylab.ucsd.edu/public_datasets/data/amazon_2023/raw/review_categories/Gift_Cards.jsonl.gz && gunzip -k data/Gift_Cards.jsonl.gz
 
